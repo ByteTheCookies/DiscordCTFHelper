@@ -49,6 +49,7 @@ func VoteHandler() handler.CommandHandler {
 			return err
 		}
 
+
 		log.Info("Fetching CTFs from ctftime", "onsite", onsite)
 		ctfs, err := ctftime.GetCTFs(10, onsite)
 		if err != nil {
