@@ -22,8 +22,16 @@ func LoadConfig() (*Config, error) {
 
 	cfg := Config{
 		Bot: BotConfig{
-			DevGuilds: []snowflake.ID{},
-			Token:     os.Getenv("TOKEN"),
+			DevGuilds: func() []snowflake.ID {
+				var ids []snowflake.ID
+				for _, s := range strings.Split(os.Getenv("GUILDS"), ",") {
+					if id, err := snowflake.Parse(s); err == nil {
+						ids = append(ids, id)
+					}
+				}
+				return ids
+			}(),
+			Token: os.Getenv("TOKEN"),
 		},
 		Log: LogConfig{
 			Level:     level,

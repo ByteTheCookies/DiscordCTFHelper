@@ -60,14 +60,17 @@ func (b *Bot) SetupBot(shouldCleanCommands *bool, listeners ...bot.EventListener
 		return err
 	}
 
-	// if *shouldCleanCommands {
-	// var id snowflake.ID = 1261228203251339374
-	// if err := b.resetAllCommands(&id); err != nil {
-	// 	log.Error("failed to reset commands", "err", err)
-	// }
-	// }
-
 	b.Client = *client
+
+	if *shouldCleanCommands {
+		for _, guildID := range b.Cfg.Bot.DevGuilds {
+			log.Info("Clearing commands for guild", "guildID", guildID)
+			if err := b.resetAllCommands(&guildID); err != nil {
+				log.Error("failed to reset commands", "err", err)
+			}
+		}
+	}
+
 	return nil
 }
 
