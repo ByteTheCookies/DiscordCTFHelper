@@ -67,6 +67,9 @@ func main() {
 	h.Command("/chall", commands.ChallHandler())
 	h.Command("/vote", commands.VoteHandler())
 	h.Command("/ping", commands.PingHandler())
+	h.Command("/rules", commands.RulesHandler())
+	h.Command("/help", commands.HelpHandler())
+	h.Command("/guide", commands.GuideHandler())
 
 	if err = b.SetupBot(shouldCleanCommands, h, bot.NewListenerFunc(b.OnReady)); err != nil {
 		log.Error("failed to setup bot", "err", err)

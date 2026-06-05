@@ -1,6 +1,9 @@
 package commands
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/charmbracelet/log"
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/handler"
@@ -18,25 +21,67 @@ func HelpHandler() handler.CommandHandler {
 			return err
 		}
 
-		response := "Available commands:\n" +
-			"/version - Get the bot version\n" +
-			"/create - Create a new CTF event\n" +
-			"/remove - Remove an existing CTF event\n" +
-			"/flag - Submit a flag for a CTF event\n" +
-			"/deleteflag - Delete a submitted flag\n" +
-			"/report - Generate a report of CTF events and flags\n" +
-			"/creds - Add credentials for a CTF event\n" +
-			"/deletecreds - Delete credentials for a CTF event\n" +
-			"/nextctfs - Get a list of upcoming CTF events\n" +
-			"/cinit - Initialize the bot for a new server\n" +
-			"/chall - Get information about a specific challenge\n" +
-			"/vote - Vote for the next CTF event to be added\n" +
-			"/ping - Check if the bot is alive\n" +
-			"/help - Get a list of available commands\n"
+		commands, err := e.Client().Rest.GetGlobalCommands(e.Client().ApplicationID, false)
+		if err != nil {
+			log.Error("failed to get global commands", "error", err)
+			return err
+		}
 
-		_, err := e.CreateFollowupMessage(discord.MessageCreate{
-			Content: response,
-			Flags:   discord.MessageFlagEphemeral,
+		var sb strings.Builder
+		sb.WriteString("# Available commands\n\n")
+
+		for _, cmd := range commands {
+			switch c := cmd.(type) {
+			case discord.SlashCommand:
+				sb.WriteString(fmt.Sprintf("**`/%s`** — %s\n", c.Name(), c.Description))
+				for _, opt := range c.Options {
+					switch o := opt.(type) {
+					case discord.ApplicationCommandOptionString:
+						sb.WriteString(fmt.Sprintf("- **`%s`** (String): %s\n", o.Name, o.Description))
+						if len(o.Choices) > 0 {
+							sb.WriteString("  - *Choices*: ")
+							for i, choice := range o.Choices {
+								if i > 0 {
+									sb.WriteString(", ")
+								}
+								sb.WriteString(fmt.Sprintf("`%s`", choice.Name))
+							}
+							sb.WriteString("\n")
+						}
+					case discord.ApplicationCommandOptionInt:
+						sb.WriteString(fmt.Sprintf("- **`%s`** (Integer): %s\n", o.Name, o.Description))
+						if o.MinValue != nil {
+							sb.WriteString(fmt.Sprintf("  - *Min*: `%d`\n", *o.MinValue))
+						}
+						if o.MaxValue != nil {
+							sb.WriteString(fmt.Sprintf("  - *Max*: `%d`\n", *o.MaxValue))
+						}
+						if len(o.Choices) > 0 {
+							sb.WriteString("  - *Choices*: ")
+							for i, choice := range o.Choices {
+								if i > 0 {
+									sb.WriteString(", ")
+								}
+								sb.WriteString(fmt.Sprintf("`%s`", choice.Name))
+							}
+							sb.WriteString("\n")
+						}
+					case discord.ApplicationCommandOptionBool:
+						sb.WriteString(fmt.Sprintf("- **`%s`** (Boolean): %s\n", o.Name, o.Description))
+					}
+				}
+			case discord.UserCommand:
+				sb.WriteString(fmt.Sprintf("**User command**: `%s`\n", c.Name()))
+			case discord.MessageCommand:
+				sb.WriteString(fmt.Sprintf("**Message command**: `%s`\n", c.Name()))
+			}
+			sb.WriteString("\n")
+		}
+
+		_, err = e.CreateFollowupMessage(discord.MessageCreate{
+			Content: sb.String(),
+
+			Flags: discord.MessageFlagEphemeral,
 		})
 		return err
 	}

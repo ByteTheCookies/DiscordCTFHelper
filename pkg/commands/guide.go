@@ -18,7 +18,17 @@ func GuideHandler() handler.CommandHandler {
 			return err
 		}
 
-		response := "Hi, Before we start, run `/rules` to see all the guidelines for playing with us.\n\nFirst, check if any new CTFs have appeared in the **feed** channel. If you find one you’re interested in, simply react to it. You will be assigned a role and gain access to the channel dedicated to that CTF.\n\nYou will receive a notification when the CTF starts.\n\nHere are some useful commands:\n\n`/creds` — View or create CTF credentials\n`/chall` — Create a thread dedicated to a specific challenge\n`/flag` — Report that you’ve found a flag and share the achievement with everyone\n\nFor more command run `/help`"
+		response := "## Welcome!\n" +
+			"Before we start, run `/rules` to see all the guidelines for playing with us.\n\n" +
+			"### How to Play\n" +
+			"1. Check if any new CTFs have appeared in the **#feed** channel.\n" +
+			"2. If you find one you’re interested in, simply **react** to it. You will be assigned a role and gain access to the channel dedicated to that CTF.\n\n" +
+			"> You will receive a notification when the CTF starts.\n\n" +
+			"### Useful Commands\n" +
+			"- `/creds` — View or create CTF credentials\n" +
+			"- `/chall` — Create a thread dedicated to a specific challenge\n" +
+			"- `/flag` — Report that you’ve found a flag and share the achievement with everyone\n\n" +
+			"*For more commands, run `/help`*"
 
 		_, err := e.CreateFollowupMessage(discord.MessageCreate{
 			Content: response,

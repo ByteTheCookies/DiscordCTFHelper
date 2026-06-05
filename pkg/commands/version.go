@@ -10,7 +10,7 @@ import (
 
 var version = discord.SlashCommandCreate{
 	Name:        "version",
-	Description: "version command",
+	Description: "Version command",
 }
 
 func VersionHandler() handler.CommandHandler {
