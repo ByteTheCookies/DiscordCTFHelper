@@ -32,7 +32,7 @@ var vote = discord.SlashCommandCreate{
 func VoteHandler() handler.CommandHandler {
 	return func(e *handler.CommandEvent) error {
 		options := e.SlashCommandInteractionData()
-		duration, ok := options.OptInt("duration")
+		duration, durationProvided := options.OptInt("duration")
 
 		onsite, _ := options.OptBool("onsite")
 
@@ -48,7 +48,6 @@ func VoteHandler() handler.CommandHandler {
 			})
 			return err
 		}
-
 
 		log.Info("Fetching CTFs from ctftime", "onsite", onsite)
 		ctfs, err := ctftime.GetCTFs(10, onsite)
@@ -69,7 +68,7 @@ func VoteHandler() handler.CommandHandler {
 		}
 
 		year, week := now.ISOWeek()
-		firstStart := time.Now().Add(time.Duration(duration) * time.Hour)
+		firstStart := time.Time{}
 		for _, ctf := range ctfs {
 			startTime, err := time.Parse(time.RFC3339, ctf.Start)
 			if err != nil {
@@ -80,15 +79,11 @@ func VoteHandler() handler.CommandHandler {
 			if y == year && w == week {
 				ctfsThisWeek = append(ctfsThisWeek, ctf)
 
-				t1, _ := time.Parse(time.RFC3339, ctf.Start)
-				if t1.Before(firstStart) {
-					firstStart = t1
+				if firstStart.IsZero() || startTime.Before(firstStart) {
+					firstStart = startTime
 				}
 			}
 		}
-
-		hoursToRemove := int((time.Now().Add(time.Duration(duration) * time.Hour).Sub(firstStart)).Hours())
-		duration = duration - hoursToRemove
 
 		log.Info("CTFs found for this week", "count", len(ctfsThisWeek))
 
@@ -123,10 +118,32 @@ func VoteHandler() handler.CommandHandler {
 		pollTitle := "Vote the next CTF to participate in! 🎉"
 		log.Info("Creating vote poll", "ctfs_count", len(ctfsThisWeek))
 
-		if !ok || duration <= 0 {
-			duration = int(time.Until(firstStart).Hours()) - 12
+		const defaultDuration = 48
+		hoursUntilFirstStart := int(time.Until(firstStart).Hours())
+
+		if durationProvided {
+			// If the user-provided duration would end after the first event starts, return an error.
+			if duration >= hoursUntilFirstStart {
+				if err := e.DeferCreateMessage(true); err != nil {
+					log.Error("failed to defer create message", "error", err)
+					return err
+				}
+				_, err := e.CreateFollowupMessage(discord.MessageCreate{
+					Content: fmt.Sprintf("The specified duration of %dh exceeds the time until the first CTF starts (%dh away). Please use a shorter duration. ❌", duration, hoursUntilFirstStart),
+					Flags:   discord.MessageFlagEphemeral,
+				})
+				return err
+			}
+		} else {
+			// Default: 48h, but if any event starts within 48h, use (hours until first event - 12h).
+			if hoursUntilFirstStart <= defaultDuration {
+				duration = hoursUntilFirstStart - 12
+			} else {
+				duration = defaultDuration
+			}
+
 			if duration < 1 {
-				duration = max(1, int(time.Until(firstStart).Hours())/2)
+				duration = max(1, hoursUntilFirstStart/2)
 			}
 		}
 
