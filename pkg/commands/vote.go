@@ -137,7 +137,7 @@ func VoteHandler() handler.CommandHandler {
 		} else {
 			// Default: 48h, but if any event starts within 48h, use (hours until first event - 12h).
 			if hoursUntilFirstStart <= defaultDuration {
-				duration = hoursUntilFirstStart - 12
+				duration = hoursUntilFirstStart - 2
 			} else {
 				duration = defaultDuration
 			}
