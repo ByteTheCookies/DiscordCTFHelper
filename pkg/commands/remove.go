@@ -50,6 +50,10 @@ func RemoveHandler() handler.CommandHandler {
 			return err
 		}
 
+		if len(ctfs) > 25 {
+			ctfs = ctfs[len(ctfs)-25:]
+		}
+
 		if len(ctfs) == 0 {
 			_, err := e.CreateFollowupMessage(discord.MessageCreate{
 				Content: "Non ci sono CTF da rimuovere. ❌",
