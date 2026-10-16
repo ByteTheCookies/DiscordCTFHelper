@@ -20,6 +20,5 @@ FROM alpine:3.12
 RUN apk add --no-cache ca-certificates libc6-compat
 
 COPY --from=builder /app/ctfhelper /ctfhelper
-COPY --from=builder /app/.env /.env
 
 ENTRYPOINT ["/ctfhelper"]

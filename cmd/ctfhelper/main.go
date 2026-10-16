@@ -22,7 +22,7 @@ import (
 func init() {
 	err := dotenv.Load()
 	if err != nil {
-		log.Fatal("error loading .env file", "err", err)
+		log.Error("error loading .env file (if is not intended, stop the container)", "err", err)
 	}
 }
 
