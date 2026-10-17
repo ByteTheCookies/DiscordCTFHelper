@@ -15,9 +15,9 @@ ENV CGO_ENABLED=1
 
 RUN GOOS=linux GOARCH=amd64 go build -o ctfhelper -ldflags="-s -w" ./cmd/ctfhelper
 
-FROM alpine:3.12
+FROM alpine:3.24.2
 
-RUN apk add --no-cache ca-certificates libc6-compat
+RUN apk add --no-cache ca-certificates sqlite
 
 COPY --from=builder /app/ctfhelper /ctfhelper
 
