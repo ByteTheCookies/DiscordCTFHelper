@@ -1,6 +1,6 @@
 module models
 
-go 1.25.5
+go 1.27.3
 
 require (
 	github.com/disgoorg/snowflake/v2 v2.0.3
@@ -10,5 +10,5 @@ require (
 require (
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
-	golang.org/x/text v0.32.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 )

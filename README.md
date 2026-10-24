@@ -36,7 +36,7 @@
 
 ### Prerequisites
 
-- Go 1.25.5 or later
+- Go 1.27.3 or later
 - A Discord bot token (obtainable via the [Discord Developer Portal](https://discord.com/developers/applications))
 
 ### Steps

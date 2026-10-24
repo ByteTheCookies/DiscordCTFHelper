@@ -1,4 +1,4 @@
-FROM golang:1.25.5-alpine AS builder
+FROM golang:1.27.3-alpine AS builder
 
 WORKDIR /app
 
@@ -15,7 +15,7 @@ ENV CGO_ENABLED=1
 
 RUN GOOS=linux GOARCH=amd64 go build -o ctfhelper -ldflags="-s -w" ./cmd/ctfhelper
 
-FROM alpine:3.24.2
+FROM alpine:3.24.3
 
 RUN apk add --no-cache ca-certificates sqlite
 
