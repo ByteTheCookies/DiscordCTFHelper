@@ -27,6 +27,7 @@ const (
 	otherThread = 41
 	managerRole = 100
 	ctfRole     = 200
+	teamID      = 42
 )
 
 func TestMain(m *testing.M) {
@@ -41,7 +42,7 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	db := database.Setup().Connection()
-	server := models.Server{ID: guildID, RoleManagerID: managerRole, ActiveCategoryID: 1, FeedChannelID: 2}
+	server := models.Server{ID: guildID, RoleManagerID: managerRole, ActiveCategoryID: 1, FeedChannelID: 2, TeamID: teamID}
 	ctf := models.CTF{Name: "ctf - 2026", ServerID: guildID, TextChannelID: ctfChannel, RoleID: ctfRole, EventID: 300}
 	report := models.Report{CTFID: 1, Place: 3, Score: 100, Solves: 2}
 	for _, err := range []error{server.Add(db), ctf.Add(db), report.Add(db)} {

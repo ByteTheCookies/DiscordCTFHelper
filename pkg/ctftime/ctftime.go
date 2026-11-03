@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	_ "image/gif"
 	_ "image/jpeg"
@@ -19,7 +20,12 @@ import (
 	"github.com/charmbracelet/log"
 )
 
-const BaseURL = "https://ctftime.org/api/v1"
+// BaseURL is the CTFtime API root. It is a variable so tests can point it at a local server.
+var BaseURL = "https://ctftime.org/api/v1"
+
+// httpClient bounds every CTFtime call: events are handled on the gateway
+// goroutine, so a request that never returns would freeze the whole bot.
+var httpClient = &http.Client{Timeout: 20 * time.Second}
 
 var UserAgentList = []string{
 	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.5 Safari/605.1.15",
@@ -53,19 +59,22 @@ func createRequest(url string) (*http.Request, error) {
 
 func GetLogo(url string) ([]byte, string, error) {
 	log.Debug("Fetching logo from URL:", "url", url)
-	client := &http.Client{}
 	req, err := createRequest(url)
 	if err != nil {
 		log.Error("Error creating request for logo:", "err", err)
 		return nil, "", err
 	}
 
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		log.Error("Error sending request for logo:", "err", err)
 		return nil, "", err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("fetch logo: status %d", resp.StatusCode)
+	}
 
 	const maxSize = 5 << 20 // 5 MB
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxSize))
@@ -75,9 +84,9 @@ func GetLogo(url string) ([]byte, string, error) {
 	}
 
 	log.Debug("Logo data fetched, size:", "size", len(data))
-	log.Debug("First bytes" + fmt.Sprintf("% x", data[:10]))
 
-	_, format, err := image.Decode(bytes.NewReader(data))
+	// DecodeConfig only reads the header, so a hostile image can't exhaust memory.
+	_, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
 		log.Error("Error decoding image data:", "err", err)
 		return nil, "", err
@@ -91,14 +100,13 @@ func GetCTFInfo(ctftimeID int) (Event, error) {
 	idParsed := strconv.Itoa(ctftimeID)
 	url := BaseURL + "/events/" + idParsed + "/"
 	log.Debug("Fetching CTF info from URL:", "url", url)
-	client := &http.Client{}
 	req, err := createRequest(url)
 	if err != nil {
 		log.Error("Error creating request for CTF info:", "err", err)
 		return Event{}, err
 	}
 
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		log.Error("Error sending request:", "err", err)
 		return Event{}, err
@@ -120,14 +128,13 @@ func GetCTFInfo(ctftimeID int) (Event, error) {
 func GetCTFs(limit int, onsite bool) ([]Event, error) {
 	url := BaseURL + "/events/" + "?limit=" + strconv.Itoa(limit)
 	log.Debug("Fetching CTFs from URL:", "url", url)
-	client := &http.Client{}
 	req, err := createRequest(url)
 	if err != nil {
 		log.Error("Error creating request for CTFs:", "err", err)
 		return nil, err
 	}
 
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		log.Error("Error sending request:", "err", err)
 		return nil, err
@@ -136,6 +143,11 @@ func GetCTFs(limit int, onsite bool) ([]Event, error) {
 
 	log.Debug("Received response for CTFs", "status_code", resp.StatusCode)
 
+	if resp.StatusCode != http.StatusOK {
+		log.Error("Non-200 status code received for CTFs", "status_code", resp.StatusCode)
+		return nil, fmt.Errorf("fetch CTFs: status %d", resp.StatusCode)
+	}
+
 	var parsedJSON []Event
 	jsonResponse, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -143,15 +155,10 @@ func GetCTFs(limit int, onsite bool) ([]Event, error) {
 		return nil, err
 	}
 
-	if resp.StatusCode == http.StatusOK {
-		log.Debug("Unmarshalling CTFs JSON response")
-		err = json.Unmarshal(jsonResponse, &parsedJSON)
-		if err != nil {
-			log.Error("Error unmarshalling CTFs JSON:", "err", err)
-			return nil, err
-		}
-	} else {
-		log.Error("Non-200 status code received for CTFs", "status_code", resp.StatusCode)
+	err = json.Unmarshal(jsonResponse, &parsedJSON)
+	if err != nil {
+		log.Error("Error unmarshalling CTFs JSON:", "err", err)
+		return nil, err
 	}
 
 	if !onsite {
@@ -179,14 +186,13 @@ func GetResultsInfo(ctftimeID int64, year int, teamID int64) (*models.Report, er
 	url := fmt.Sprintf("%s/results/%d/", BaseURL, year)
 	log.Debug("Fetching CTF results from URL:", "url", url)
 
-	client := &http.Client{}
 	req, err := createRequest(url)
 	if err != nil {
 		log.Error("Error creating request for results:", "err", err)
 		return nil, err
 	}
 
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		log.Error("Error sending request for results:", "err", err)
 		return nil, err

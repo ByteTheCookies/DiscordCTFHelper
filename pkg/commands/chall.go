@@ -122,10 +122,17 @@ func ChallHandler() handler.CommandHandler {
 			return err
 		}
 
-		e.Client().Rest.CreateThreadFromMessage(e.Channel().ID(), createdMsg.ID, discord.ThreadCreateFromMessage{
+		if _, err := e.Client().Rest.CreateThreadFromMessage(e.Channel().ID(), createdMsg.ID, discord.ThreadCreateFromMessage{
 			Name:                name,
 			AutoArchiveDuration: discord.AutoArchiveDuration3d,
-		})
+		}); err != nil {
+			log.Error("failed to create thread", "error", err)
+			_, _ = e.CreateFollowupMessage(discord.MessageCreate{
+				Content: "failed to create the thread. ❌",
+				Flags:   discord.MessageFlagEphemeral,
+			})
+			return err
+		}
 
 		_, err = e.CreateFollowupMessage(discord.MessageCreate{
 			Content: "Thread created successfully! ✅",

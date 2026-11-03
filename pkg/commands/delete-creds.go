@@ -56,11 +56,6 @@ func DeleteCredsHandler() handler.CommandHandler {
 		}
 
 		if !slices.Contains(e.Member().RoleIDs, ctf.RoleID) {
-			if err := e.DeferCreateMessage(true); err != nil {
-				log.Error("failed to defer create message", "error", err)
-				return err
-			}
-
 			_, err := e.CreateFollowupMessage(discord.MessageCreate{
 				Content: "You don't have the required role to view or set credentials. ❌",
 				Flags:   discord.MessageFlagEphemeral,
@@ -99,6 +94,7 @@ func DeleteCredsHandler() handler.CommandHandler {
 			})
 			return err
 		} else {
+			log.Error("failed to remove credentials", "error", err)
 			_, err := e.CreateFollowupMessage(discord.MessageCreate{
 				Content: "failed to remove the credentials ❌",
 				Flags:   discord.MessageFlagEphemeral,

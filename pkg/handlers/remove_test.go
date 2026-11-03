@@ -61,20 +61,26 @@ func exists(t *testing.T, id int64) bool {
 	return ctf.ID == id
 }
 
-// failingRest makes removal stop at the first Discord call, which proves the
-// permission check let the user through without needing a whole fake guild.
-// Every other call panics.
-type failingRest struct {
+// removeRest panics on every Discord call a test does not expect: the CTFs in
+// these tests have no role, event or feed message.
+type removeRest struct {
 	rest.Rest
-	reached bool
+	reached   bool
+	deleteErr error
+	replies   []string
 }
 
-func (f *failingRest) GetChannel(_ snowflake.ID, _ ...rest.RequestOpt) (discord.Channel, error) {
+func (f *removeRest) DeleteChannel(_ snowflake.ID, _ ...rest.RequestOpt) error {
 	f.reached = true
-	return nil, errors.New("stop here")
+	return f.deleteErr
 }
 
-func selectCTF(t *testing.T, f *failingRest, ctfID int64, role int) string {
+func (f *removeRest) CreateFollowupMessage(_ snowflake.ID, _ string, m discord.MessageCreate, _ ...rest.RequestOpt) (*discord.Message, error) {
+	f.replies = append(f.replies, m.Content)
+	return &discord.Message{}, nil
+}
+
+func selectCTF(t *testing.T, f *removeRest, ctfID int64, role int) string {
 	t.Helper()
 	raw := fmt.Sprintf(`{"id":"1","type":3,"application_id":"2","token":"t","version":1,"guild_id":"%d",
 		"channel":{"id":"20","type":0,"name":"c","guild_id":"%d"},
@@ -96,12 +102,15 @@ func selectCTF(t *testing.T, f *failingRest, ctfID int64, role int) string {
 			return nil
 		},
 	})
+	if len(f.replies) > 0 {
+		return f.replies[len(f.replies)-1]
+	}
 	return reply
 }
 
 func TestRemoveSelectRejectsNonManagers(t *testing.T) {
 	ctf := addCTF(t, guildID)
-	f := &failingRest{}
+	f := &removeRest{}
 	if reply := selectCTF(t, f, ctf.ID, 999); !strings.Contains(reply, "required role") {
 		t.Fatalf("reply = %q", reply)
 	}
@@ -110,18 +119,52 @@ func TestRemoveSelectRejectsNonManagers(t *testing.T) {
 	}
 }
 
-func TestRemoveSelectLetsManagersThrough(t *testing.T) {
+func TestRemoveSelectRemovesForManagers(t *testing.T) {
 	ctf := addCTF(t, guildID)
-	f := &failingRest{}
+	f := &removeRest{}
+	if reply := selectCTF(t, f, ctf.ID, managerRole); !strings.Contains(reply, "removed successfully") {
+		t.Fatalf("reply = %q", reply)
+	}
+	if !f.reached || exists(t, ctf.ID) {
+		t.Fatal("the CTF was not removed")
+	}
+}
+
+func TestRemoveSelectToleratesMissingChannel(t *testing.T) {
+	ctf := addCTF(t, guildID)
+	f := &removeRest{deleteErr: &rest.Error{Code: rest.JSONErrorCodeUnknownChannel}}
 	selectCTF(t, f, ctf.ID, managerRole)
-	if !f.reached {
-		t.Fatal("a manager was stopped by the permission check")
+	if exists(t, ctf.ID) {
+		t.Fatal("a CTF whose channel is gone must still be removable")
+	}
+}
+
+func TestRemoveSelectRemovesCTFWithoutChannel(t *testing.T) {
+	db := database.GetInstance().Connection()
+	ctf := models.CTF{Name: t.Name(), ServerID: guildID} // left behind by a failed /create
+	if err := ctf.Add(db); err != nil {
+		t.Fatal(err)
+	}
+	selectCTF(t, &removeRest{}, ctf.ID, managerRole)
+	if exists(t, ctf.ID) {
+		t.Fatal("a half-created CTF must be removable")
+	}
+}
+
+func TestRemoveSelectKeepsCTFWhenDiscordFails(t *testing.T) {
+	ctf := addCTF(t, guildID)
+	f := &removeRest{deleteErr: errors.New("discord is down")}
+	if reply := selectCTF(t, f, ctf.ID, managerRole); !strings.Contains(reply, "Error while removing") {
+		t.Fatalf("reply = %q", reply)
+	}
+	if !exists(t, ctf.ID) {
+		t.Fatal("the CTF was dropped although its channel still exists")
 	}
 }
 
 func TestRemoveSelectRejectsCTFsOfOtherGuilds(t *testing.T) {
 	ctf := addCTF(t, 99)
-	f := &failingRest{}
+	f := &removeRest{}
 	selectCTF(t, f, ctf.ID, managerRole)
 	if f.reached || !exists(t, ctf.ID) {
 		t.Fatal("a manager of another guild reached the removal")

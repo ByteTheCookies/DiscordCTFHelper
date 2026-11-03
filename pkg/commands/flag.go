@@ -109,11 +109,15 @@ func FlagHandler() handler.CommandHandler {
 				Score:  -1,
 				Solves: 1,
 			}
-			report.Add(db)
+			if err := report.Add(db); err != nil {
+				log.Error("failed to save report", "error", err)
+			}
 		} else {
 			report.Solves += 1
 			report.CTFID = ctf.ID
-			report.Update(db)
+			if err := report.Update(db); err != nil {
+				log.Error("failed to update report", "error", err)
+			}
 		}
 
 		content := fmt.Sprintf("<@&%s> NEW FLAG FOUND BY %s", ctf.RoleID, e.User().Mention())

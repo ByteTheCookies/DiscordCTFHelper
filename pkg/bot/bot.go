@@ -47,7 +47,8 @@ func (b *Bot) SetupBot(shouldCleanCommands *bool, listeners ...bot.EventListener
 			gateway.IntentGuilds, gateway.IntentGuildMessages,
 			gateway.IntentMessageContent, gateway.IntentGuildMembers,
 			gateway.IntentGuildMessageReactions, gateway.IntentGuildScheduledEvents)),
-		bot.WithCacheConfigOpts(cache.WithCaches(cache.FlagGuilds)),
+		// Scheduled events are cached to tell real status changes from other edits.
+		bot.WithCacheConfigOpts(cache.WithCaches(cache.FlagGuilds, cache.FlagGuildScheduledEvents)),
 		// Text from users and CTFtime ends up in messages: never let it ping @everyone.
 		bot.WithRestConfigOpts(rest.WithDefaultAllowedMentions(discord.AllowedMentions{
 			Parse: []discord.AllowedMentionType{discord.AllowedMentionTypeUsers, discord.AllowedMentionTypeRoles},
@@ -81,7 +82,7 @@ func (b *Bot) SetupBot(shouldCleanCommands *bool, listeners ...bot.EventListener
 	return nil
 }
 
-func changePresenceStatus(_ context.Context, client bot.Client) error {
+func changePresenceStatus(client bot.Client) {
 	ticker := time.NewTicker(10 * time.Minute)
 	defer ticker.Stop()
 	for range ticker.C {
@@ -97,8 +98,6 @@ func changePresenceStatus(_ context.Context, client bot.Client) error {
 		}
 		cancel()
 	}
-
-	return nil
 }
 
 // Delete all commands from Discord
@@ -152,5 +151,5 @@ func (b *Bot) OnReady(_ *events.Ready) {
 
 	log.Info("Starting presence status changer...")
 	// Change presence every 10 minutes
-	go changePresenceStatus(context.Background(), b.Client)
+	go changePresenceStatus(b.Client)
 }

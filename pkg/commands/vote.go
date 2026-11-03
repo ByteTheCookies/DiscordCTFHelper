@@ -2,16 +2,17 @@ package commands
 
 import (
 	"ctftime"
-	"database"
 	"discordutils"
 	"fmt"
-	"models"
 	"time"
 
 	"github.com/charmbracelet/log"
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/handler"
 )
+
+// maxPollHours is the longest poll Discord accepts.
+const maxPollHours = 768
 
 var vote = discord.SlashCommandCreate{
 	Name:        "vote",
@@ -21,6 +22,8 @@ var vote = discord.SlashCommandCreate{
 			Name:        "duration",
 			Description: "Duration of the vote in hours (default 48h)",
 			Required:    false,
+			MinValue:    new(1),
+			MaxValue:    new(maxPollHours),
 		},
 		discord.ApplicationCommandOptionBool{
 			Name:        "onsite",
@@ -62,10 +65,28 @@ func VoteHandler() handler.CommandHandler {
 			})
 		}
 
+		// CTFtime can take longer than the 3 seconds Discord allows before an ack.
+		if err := e.DeferCreateMessage(true); err != nil {
+			log.Error("failed to defer create message", "error", err)
+			return err
+		}
+		fail := func(content string) error {
+			_, err := e.CreateFollowupMessage(discord.MessageCreate{
+				Content: content + " ❌",
+				Flags:   discord.MessageFlagEphemeral,
+			})
+			return err
+		}
+
+		if durationProvided && (duration < 1 || duration > maxPollHours) {
+			return fail(fmt.Sprintf("The duration must be between 1 and %d hours.", maxPollHours))
+		}
+
 		log.Info("Fetching CTFs from ctftime", "onsite", onsite)
 		ctfs, err := ctftime.GetCTFs(10, onsite)
 		if err != nil {
 			log.Error("failed to get CTFs", "error", err)
+			_ = fail("failed to get the CTFs from CTFtime.")
 			return err
 		}
 
@@ -101,31 +122,7 @@ func VoteHandler() handler.CommandHandler {
 		log.Info("CTFs found for this week", "count", len(ctfsThisWeek))
 
 		if len(ctfsThisWeek) < 2 || len(ctfsThisWeek) > 10 {
-			if err := e.DeferCreateMessage(true); err != nil {
-				log.Error("failed to defer create message", "error", err)
-				return err
-			}
-			_, err := e.CreateFollowupMessage(discord.MessageCreate{
-				Content: "There must be between 2 and 10 CTFs this week to create a vote. ❌",
-				Flags:   discord.MessageFlagEphemeral,
-			})
-			return err
-		}
-
-		var server models.Server
-		db := database.GetInstance().Connection()
-		err = server.GetByID(db, *e.GuildID())
-		if err != nil {
-			log.Error("failed to fetch server configuration", "error", err)
-			if err := e.DeferCreateMessage(true); err != nil {
-				log.Error("failed to defer create message", "error", err)
-				return err
-			}
-			_, _ = e.CreateFollowupMessage(discord.MessageCreate{
-				Content: "failed to fetch server configuration. ❌",
-				Flags:   discord.MessageFlagEphemeral,
-			})
-			return err
+			return fail("There must be between 2 and 10 CTFs this week to create a vote.")
 		}
 
 		pollTitle := "Vote the next CTF to participate in! 🎉"
@@ -137,18 +134,10 @@ func VoteHandler() handler.CommandHandler {
 		if durationProvided {
 			// If the user-provided duration would end after the first event starts, return an error.
 			if duration >= hoursUntilFirstStart {
-				if err := e.DeferCreateMessage(true); err != nil {
-					log.Error("failed to defer create message", "error", err)
-					return err
-				}
-				_, err := e.CreateFollowupMessage(discord.MessageCreate{
-					Content: fmt.Sprintf("The specified duration of %dh exceeds the time until the first CTF starts (%dh away). Please use a shorter duration. ❌", duration, hoursUntilFirstStart),
-					Flags:   discord.MessageFlagEphemeral,
-				})
-				return err
+				return fail(fmt.Sprintf("The specified duration of %dh exceeds the time until the first CTF starts (%dh away). Please use a shorter duration.", duration, hoursUntilFirstStart))
 			}
 		} else {
-			// Default: 48h, but if any event starts within 48h, use (hours until first event - 12h).
+			// Default: 48h, but if any event starts within 48h, end the poll 2h before it.
 			if hoursUntilFirstStart <= defaultDuration {
 				duration = hoursUntilFirstStart - 2
 			} else {
@@ -160,33 +149,35 @@ func VoteHandler() handler.CommandHandler {
 			}
 		}
 
-		err = e.CreateMessage(
-			discord.MessageCreate{
-				Content: "It's time to vote for the next CTF! Cast your vote below: 🗳️",
-				Poll: &discord.PollCreate{
-					LayoutType:       discord.PollLayoutTypeDefault,
-					AllowMultiselect: false,
-					Question: discord.PollMedia{
-						Text: &pollTitle,
-					},
-					Answers: func() []discord.PollMedia {
-						options := make([]discord.PollMedia, 0, len(ctfsThisWeek))
+		answers := make([]discord.PollMedia, 0, len(ctfsThisWeek))
+		for _, ctf := range ctfsThisWeek {
+			text := fmt.Sprintf("%.40s (%d)", ctf.Title, ctf.ID)
+			log.Debug("Adding CTF to poll options", "ctf", text)
+			answers = append(answers, discord.PollMedia{Text: &text})
+		}
 
-						for _, ctf := range ctfsThisWeek {
-							text := fmt.Sprintf("%.40s (%d)", ctf.Title, ctf.ID)
-							log.Debug("Adding CTF to poll options", "ctf", text)
-
-							options = append(options, discord.PollMedia{
-								Text: &text,
-							})
-						}
-						return options
-					}(),
-					Duration: duration,
+		// Sent to the channel, not as a followup: the deferred response is ephemeral and the poll must be public.
+		if _, err := e.Client().Rest.CreateMessage(e.Channel().ID(), discord.MessageCreate{
+			Content: "It's time to vote for the next CTF! Cast your vote below: 🗳️",
+			Poll: &discord.PollCreate{
+				LayoutType:       discord.PollLayoutTypeDefault,
+				AllowMultiselect: false,
+				Question: discord.PollMedia{
+					Text: &pollTitle,
 				},
+				Answers:  answers,
+				Duration: duration,
 			},
-		)
+		}); err != nil {
+			log.Error("failed to create poll", "error", err)
+			_ = fail("failed to create the poll.")
+			return err
+		}
 
+		_, err = e.CreateFollowupMessage(discord.MessageCreate{
+			Content: "Poll created ✅",
+			Flags:   discord.MessageFlagEphemeral,
+		})
 		return err
 	}
 }

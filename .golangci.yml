@@ -1,7 +1,7 @@
 version: "2"
 
 run:
-  go: "1.26.0"
+  go: "1.27.3"
 
   timeout: 5m
   allow-parallel-runners: true
@@ -59,10 +59,13 @@ linters:
     - modernize # Detects code that can be modernized to use newer Go features.
     - zerologlint
     - whitespace # Detects unnecessary whitespace.
-  disable:
-    - errcheck
 
   settings:
+    errcheck:
+      exclude-functions:
+        - (io.ReadCloser).Close
+        - (*database/sql.DB).Close
+
     gocyclo:
       min-complexity: 16
 

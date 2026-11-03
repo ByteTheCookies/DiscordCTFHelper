@@ -1,0 +1,67 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.work
+          cache-dependency-path: "**/go.sum"
+
+      - name: Vet and test every module
+        run: |
+          go list -f '{{.Dir}}' -m | while read -r dir; do
+            echo "::group::$dir"
+            go -C "$dir" vet ./...
+            go -C "$dir" test -race ./...
+            echo "::endgroup::"
+          done
+
+      - name: Check for known vulnerabilities
+        run: go -C cmd/ctfhelper run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+  lint:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - cmd/ctfhelper
+          - pkg/bot
+          - pkg/commands
+          - pkg/config
+          - pkg/ctftime
+          - pkg/database
+          - pkg/discord
+          - pkg/handlers
+          - pkg/models
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.work
+          cache-dependency-path: "**/go.sum"
+
+      - uses: golangci/golangci-lint-action@v9.3.0
+        with:
+          version: v2.15.0
+          working-directory: ${{ matrix.module }}
+          # The code predates the linters: fail on what a change adds, not on existing debt.
+          only-new-issues: true

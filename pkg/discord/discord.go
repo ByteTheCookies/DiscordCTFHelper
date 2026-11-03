@@ -18,7 +18,21 @@ import (
 	"golang.org/x/exp/rand"
 )
 
-const MaxDescLength = 4096
+// Length limits enforced by Discord, in characters.
+const (
+	MaxEventDescLength   = 1000
+	MaxOptionLabelLength = 100
+	MaxOptionDescLength  = 100
+)
+
+// Truncate shortens s to at most maxLen characters without splitting one.
+func Truncate(s string, maxLen int) string {
+	r := []rune(s)
+	if len(r) <= maxLen {
+		return s
+	}
+	return string(r[:maxLen-3]) + "..."
+}
 
 // PermissionDenied is shown to users who lack the manager role.
 const PermissionDenied = "You don't have the required role to run this command. ❌"
@@ -82,13 +96,14 @@ func CreateEvents(client *bot.Client, guildID *snowflake.ID, info ctftime.Event,
 	if info.Logo != "" {
 		imageLogo, imageType, err := ctftime.GetLogo(info.Logo)
 		if err != nil {
-			return discord.GuildScheduledEvent{}, err
-		}
-		log.Debug("Creating event with logo", "imageType", imageType)
-
-		image = &discord.Icon{
-			Data: imageLogo,
-			Type: discord.IconType(imageType),
+			// A missing or unreadable logo must not cost the whole event.
+			log.Warn("failed to fetch the CTF logo, creating event without image", "logo", info.Logo, "err", err)
+		} else {
+			log.Debug("Creating event with logo", "imageType", imageType)
+			image = &discord.Icon{
+				Data: imageLogo,
+				Type: discord.IconType("image/" + imageType),
+			}
 		}
 	}
 
@@ -130,10 +145,11 @@ func CreateChannel(client *bot.Client, guildID *snowflake.ID, channelName string
 	log.Debug("Fetching category channel", "categoryID", categoryID)
 	category, err := client.Rest.GetChannel(categoryID)
 	if err != nil {
-		log.Debug("failed to fetch category channel", "err", err)
+		log.Error("failed to fetch category channel", "err", err)
+		return nil, errors.New("invalid category")
 	}
-	if err != nil || category.Type() != discord.ChannelTypeGuildCategory {
-		log.Debug("Category channel is invalid or not a category", "type", category.Type())
+	if category.Type() != discord.ChannelTypeGuildCategory {
+		log.Error("Channel is not a category", "type", category.Type())
 		return nil, errors.New("invalid category")
 	}
 
@@ -205,7 +221,7 @@ func CreateEmbed(client *bot.Client, data ctftime.Event, startTime time.Time, en
 - **Prizes:**
 %s
 
-`, data.Description, int(startTime.Unix()), int(endTime.Unix()), data.URL, data.Format, data.Location, data.Weight, data.Prizes)
+`, Truncate(data.Description, 2500), int(startTime.Unix()), int(endTime.Unix()), data.URL, data.Format, data.Location, data.Weight, Truncate(data.Prizes, 1000))
 
 	t := time.Now()
 	embed := discord.Embed{

@@ -20,9 +20,9 @@ func ParseCtfsOptions(ctfs []models.CTF) []discord.StringSelectMenuOption {
 	options := make([]discord.StringSelectMenuOption, 0, len(ctfs))
 	for _, ctf := range ctfs {
 		option := discord.NewStringSelectMenuOption(
-			ctf.Name,
+			discordutils.Truncate(ctf.Name, discordutils.MaxOptionLabelLength),
 			strconv.Itoa(int(ctf.ID)),
-		).WithDescription(ctf.Description)
+		).WithDescription(discordutils.Truncate(ctf.Description, discordutils.MaxOptionDescLength))
 		options = append(options, option)
 	}
 	return options

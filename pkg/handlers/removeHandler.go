@@ -3,6 +3,7 @@ package handlers
 import (
 	"database"
 	"discordutils"
+	"errors"
 	"fmt"
 	"models"
 	"strconv"
@@ -11,21 +12,22 @@ import (
 	"github.com/disgoorg/disgo/bot"
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/events"
+	"github.com/disgoorg/disgo/rest"
 )
 
 func RemoveCTF(e *events.ComponentInteractionCreate, ctf models.CTF) error {
 	db := database.GetInstance().Connection()
-	channel, err := e.Client().Rest.GetChannel(ctf.TextChannelID)
-	if err != nil {
-		log.Error("Error fetching channel to remove CTF", "err", err, "channel_id", ctf.TextChannelID)
-		return err
-	}
 
-	if err := e.Client().Rest.DeleteChannel(ctf.TextChannelID); err != nil {
-		log.Error("Error deleting channel for CTF", "err", err, "channel_id", ctf.TextChannelID)
-		return err
+	// A channel already gone, or never created by a failed /create, must not make the CTF unremovable.
+	if ctf.TextChannelID != 0 {
+		err := e.Client().Rest.DeleteChannel(ctf.TextChannelID)
+		var restErr *rest.Error
+		if err != nil && (!errors.As(err, &restErr) || restErr.Code != rest.JSONErrorCodeUnknownChannel) {
+			log.Error("Error deleting channel for CTF", "err", err, "channel_id", ctf.TextChannelID)
+			return err
+		}
+		log.Info("Deleted channel for CTF", "channel_id", ctf.TextChannelID, "ctf_time_id", ctf.CTFTimeID)
 	}
-	log.Info("Deleted channel for CTF", "channel_id", channel.ID(), "ctf_time_id", ctf.CTFTimeID)
 
 	if ctf.RoleID != 0 {
 		if err := e.Client().Rest.DeleteRole(ctf.ServerID, ctf.RoleID); err != nil {
@@ -44,19 +46,13 @@ func RemoveCTF(e *events.ComponentInteractionCreate, ctf models.CTF) error {
 	}
 
 	var server models.Server
-	err = server.GetByID(db, ctf.ServerID)
-	if err != nil {
+	if err := server.GetByID(db, ctf.ServerID); err != nil {
 		log.Error("Error fetching server for CTF removal", "err", err, "server_id", ctf.ServerID)
-		return err
-	}
-	feedChannel, err := e.Client().Rest.GetChannel(server.FeedChannelID)
-	if err != nil {
-		log.Error("Error fetching feed channel for CTF removal", "err", err, "channel_id", server.FeedChannelID)
 		return err
 	}
 
 	if ctf.MsgID != 0 {
-		if err := e.Client().Rest.DeleteMessage(feedChannel.ID(), ctf.MsgID); err != nil {
+		if err := e.Client().Rest.DeleteMessage(server.FeedChannelID, ctf.MsgID); err != nil {
 			log.Error("Error deleting feed message for CTF", "err", err, "msg_id", ctf.MsgID)
 		} else {
 			log.Info("Deleted feed message for CTF", "msg_id", ctf.MsgID, "ctf_time_id", ctf.CTFTimeID)
@@ -68,8 +64,6 @@ func RemoveCTF(e *events.ComponentInteractionCreate, ctf models.CTF) error {
 
 func RemoveHandler() bot.EventListener {
 	return bot.NewListenerFunc(func(e *events.ComponentInteractionCreate) {
-		db := database.GetInstance().Connection()
-
 		if e.Data.CustomID() != "remove_ctf_select" || e.GuildID() == nil {
 			return
 		}
@@ -88,58 +82,55 @@ func RemoveHandler() bot.EventListener {
 			return
 		}
 
+		// Removal takes several Discord calls: acknowledge within the 3 second limit.
+		if err := e.DeferCreateMessage(true); err != nil {
+			log.Error("failed to defer create message", "err", err)
+			return
+		}
+		reply := func(content string) {
+			if _, err := e.Client().Rest.CreateFollowupMessage(e.ApplicationID(), e.Token(), discord.MessageCreate{
+				Content: content,
+				Flags:   discord.MessageFlagEphemeral,
+			}); err != nil {
+				log.Error("failed to send followup", "err", err)
+			}
+		}
+
+		db := database.GetInstance().Connection()
 		for _, value := range values {
 			valueInt, err := strconv.Atoi(value)
 			if err != nil {
-				log.Error("Error parsing CTFTime ID from select value", "err", err, "value", value)
-				_ = e.CreateMessage(discord.MessageCreate{
-					Content: "Error processing selection.",
-					Flags:   discord.MessageFlagEphemeral,
-				})
+				log.Error("Error parsing CTF ID from select value", "err", err, "value", value)
+				reply("Error processing selection.")
 				return
 			}
 
 			var ctf models.CTF
 			err = ctf.GetByID(db, int64(valueInt))
 			if err != nil {
-				log.Error("Error fetching CTF by CTFTime ID", "err", err, "ctf_time_id", valueInt)
-				_ = e.CreateMessage(discord.MessageCreate{
-					Content: "Error retrieving the CTF from the database.",
-					Flags:   discord.MessageFlagEphemeral,
-				})
+				log.Error("Error fetching CTF by ID", "err", err, "ctf_id", valueInt)
+				reply("Error retrieving the CTF from the database.")
 				return
 			}
 			if ctf == (models.CTF{}) || ctf.ServerID != *e.GuildID() {
-				_ = e.CreateMessage(discord.MessageCreate{
-					Content: fmt.Sprintf("No CTF found with CTFTime ID %d.", valueInt),
-					Flags:   discord.MessageFlagEphemeral,
-				})
+				reply(fmt.Sprintf("No CTF found with ID %d.", valueInt))
 				return
 			}
 
 			if err := RemoveCTF(e, ctf); err != nil {
-				log.Error("Error removing CTF", "err", err, "ctf_time_id", valueInt)
-				_ = e.CreateMessage(discord.MessageCreate{
-					Content: "Error while removing the CTF.",
-					Flags:   discord.MessageFlagEphemeral,
-				})
+				log.Error("Error removing CTF", "err", err, "ctf_id", valueInt)
+				reply("Error while removing the CTF.")
 				return
 			}
 
 			// Delete CTF from database
 			if err := ctf.Delete(db); err != nil {
 				log.Error("Error deleting CTF from database", "err", err, "ctf_id", ctf.ID)
-				_ = e.CreateMessage(discord.MessageCreate{
-					Content: "Error while removing the CTF.",
-					Flags:   discord.MessageFlagEphemeral,
-				})
+				reply("Error while removing the CTF.")
 				return
 			}
 		}
 
-		_ = e.CreateMessage(discord.MessageCreate{
-			Content: "CTF removed successfully ✅.",
-			Flags:   discord.MessageFlagEphemeral,
-		})
+		reply("CTF removed successfully ✅.")
 	})
 }
