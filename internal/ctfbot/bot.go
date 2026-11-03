@@ -32,7 +32,6 @@ func NewClient(ctx context.Context, token string, listeners ...bot.EventListener
 	client, err := disgo.New(token,
 		bot.WithGatewayConfigOpts(gateway.WithIntents(
 			gateway.IntentGuilds, gateway.IntentGuildMessages,
-			gateway.IntentMessageContent, gateway.IntentGuildMembers,
 			gateway.IntentGuildMessageReactions, gateway.IntentGuildScheduledEvents)),
 		// Scheduled events are cached to tell real status changes from other edits.
 		bot.WithCacheConfigOpts(cache.WithCaches(cache.FlagGuilds, cache.FlagGuildScheduledEvents)),

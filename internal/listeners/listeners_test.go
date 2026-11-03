@@ -33,7 +33,7 @@ func setup(t *testing.T) (*Listeners, *store.Store) {
 	if err := st.ReplaceServer(store.Server{ID: guildID, RoleManagerID: managerRole}); err != nil {
 		t.Fatal(err)
 	}
-	return New(st, ctf.NewService(st, ctftime.New(""))), st
+	return New(st, ctf.NewService(st, ctftime.New("")), 0), st
 }
 
 func addCTF(t *testing.T, st *store.Store, c store.CTF) store.CTF {

@@ -13,12 +13,19 @@ COPY . .
 
 ENV CGO_ENABLED=1
 
-RUN GOOS=linux GOARCH=amd64 go build -o ctfhelper -ldflags="-s -w" ./cmd/ctfhelper
+ARG VERSION=dev
+ARG COMMIT=unknown
+
+RUN GOOS=linux GOARCH=amd64 go build -o ctfhelper \
+    -ldflags="-s -w -X github.com/ByteTheCookies/DiscordCTFHelper/internal/config.Version=${VERSION} -X github.com/ByteTheCookies/DiscordCTFHelper/internal/config.Commit=${COMMIT}" \
+    ./cmd/ctfhelper
 
 FROM alpine:3.24.3
 
-RUN apk add --no-cache ca-certificates sqlite
+RUN apk add --no-cache ca-certificates sqlite && adduser -D -u 1000 ctfhelper
 
 COPY --from=builder /app/ctfhelper /ctfhelper
+
+USER ctfhelper
 
 ENTRYPOINT ["/ctfhelper"]

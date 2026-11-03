@@ -64,6 +64,10 @@
    LOG_SOURCE=false
    ```
 
+   Optional: `DB_PATH` (default `data/ctfs.db`) and `GREET_EMOJI_ID`, a custom emoji to greet new members with (default 🍪).
+
+   When running the image, the bot runs as UID 1000 and needs write access to the directory holding the database.
+
 4. Run the bot:
 
    ```bash

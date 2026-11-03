@@ -10,6 +10,7 @@ services:
       - LOG_LEVEL=${LOG_LEVEL}
       - LOG_FORMAT=${LOG_FORMAT}
       - LOG_SOURCE=${LOG_SOURCE}
+      - GREET_EMOJI_ID=${GREET_EMOJI_ID:-}
     volumes:
       - ./data:/data
     restart: unless-stopped

@@ -11,23 +11,23 @@ import (
 	"github.com/disgoorg/disgo/bot"
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/events"
+	"github.com/disgoorg/snowflake/v2"
 
 	"github.com/ByteTheCookies/DiscordCTFHelper/internal/ctf"
 	"github.com/ByteTheCookies/DiscordCTFHelper/internal/store"
 )
 
-// cookieEmojiID is the custom emoji used to greet new members.
-const cookieEmojiID = 1365671553622343792
-
 // Listeners implements the event listeners on top of their dependencies.
 type Listeners struct {
-	store *store.Store
-	ctf   *ctf.Service
+	store        *store.Store
+	ctf          *ctf.Service
+	greetEmojiID snowflake.ID
 }
 
-// New returns Listeners using the given dependencies.
-func New(st *store.Store, svc *ctf.Service) *Listeners {
-	return &Listeners{store: st, ctf: svc}
+// New returns Listeners using the given dependencies. New members are greeted
+// with the custom emoji greetEmojiID, or a default one if it is 0 or unavailable.
+func New(st *store.Store, svc *ctf.Service, greetEmojiID snowflake.ID) *Listeners {
+	return &Listeners{store: st, ctf: svc, greetEmojiID: greetEmojiID}
 }
 
 // All returns every event listener of the bot.
@@ -36,7 +36,7 @@ func (l *Listeners) All() []bot.EventListener {
 		bot.NewListenerFunc(l.credsModal),
 		bot.NewListenerFunc(l.removeSelect),
 		bot.NewListenerFunc(l.pollResult),
-		bot.NewListenerFunc(greetNewMember),
+		bot.NewListenerFunc(l.greetNewMember),
 		bot.NewListenerFunc(l.reactionAdd),
 		bot.NewListenerFunc(l.reactionRemove),
 		bot.NewListenerFunc(l.scheduledEventUpdate),
@@ -102,16 +102,18 @@ func (l *Listeners) saveCreds(e *events.ModalSubmitInteractionCreate) string {
 	return fmt.Sprintf("<@&%s>, Credentials submitted ✅.", c.RoleID)
 }
 
-func greetNewMember(e *events.MessageCreate) {
+func (l *Listeners) greetNewMember(e *events.MessageCreate) {
 	if e.Message.Type != discord.MessageTypeUserJoin || e.GuildID == nil {
 		return
 	}
 	reaction := "🍪"
-	emoji, err := e.Client().Rest.GetEmoji(*e.GuildID, cookieEmojiID)
-	if err != nil {
-		log.Debug("custom cookie emoji not available", "err", err)
-	} else {
-		reaction = emoji.String()
+	if l.greetEmojiID != 0 {
+		emoji, err := e.Client().Rest.GetEmoji(*e.GuildID, l.greetEmojiID)
+		if err != nil {
+			log.Debug("custom greeting emoji not available", "err", err)
+		} else {
+			reaction = emoji.String()
+		}
 	}
 	if err := e.Client().Rest.AddReaction(e.ChannelID, e.Message.ID, reaction); err != nil {
 		log.Error("failed to react to new member", "err", err)
