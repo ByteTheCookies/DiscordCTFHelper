@@ -31,12 +31,8 @@ const (
 
 const embedColor = 0xBEBEFE
 
-var (
-	// ErrAlreadyExists is returned when the server already has the CTF.
-	ErrAlreadyExists = errors.New("CTF already exists")
-	// ErrInvalidEvent is returned when CTFtime has no usable data for the CTF.
-	ErrInvalidEvent = errors.New("invalid CTF information")
-)
+// ErrInvalidEvent is returned when CTFtime has no usable data for the CTF.
+var ErrInvalidEvent = errors.New("invalid CTF information")
 
 // Service manages the lifecycle of CTFs.
 type Service struct {
@@ -79,7 +75,8 @@ func isRESTCode(err error, code rest.JSONErrorCode) bool {
 }
 
 // Create publishes the CTFtime event on the server: role, channel, feed message
-// and scheduled event.
+// and scheduled event. If any of it fails, what was created is removed again.
+// It returns store.ErrExists if the server already has the CTF.
 func (s *Service) Create(ctx context.Context, client *bot.Client, server store.Server, ctftimeID int) error {
 	info, err := s.ctftime.Event(ctx, ctftimeID)
 	if err != nil {
@@ -90,51 +87,63 @@ func (s *Service) Create(ctx context.Context, client *bot.Client, server store.S
 		return err
 	}
 
-	title := fmt.Sprintf("%s - %d", info.Title, start.Year())
-	exists, err := s.store.CTFExists(title, server.ID)
-	if err != nil {
-		return err
+	c := store.CTF{
+		Name:      fmt.Sprintf("%s - %d", info.Title, start.Year()),
+		ServerID:  server.ID,
+		CTFTimeID: int64(ctftimeID),
 	}
-	if exists {
-		return ErrAlreadyExists
-	}
-
-	// Save the record early and after each step, so progress is not lost.
-	c := store.CTF{Name: title, ServerID: server.ID, CTFTimeID: int64(ctftimeID)}
+	// Reserving the name first makes a concurrent /create of the same CTF fail with store.ErrExists.
 	if err := s.store.AddCTF(&c); err != nil {
 		return err
 	}
-	log.Info("Creating CTF", "title", title)
+	log.Info("Creating CTF", "title", c.Name)
 
-	role, err := createRole(client, server.ID, title)
+	if err := s.provision(ctx, client, server, &c, info, start, end); err != nil {
+		// Leave nothing behind, so the same /create can simply be tried again.
+		if removeErr := s.Remove(client, c); removeErr != nil {
+			log.Error("failed to roll back CTF, use /remove to clear it", "err", removeErr, "title", c.Name)
+		}
+		return err
+	}
+
+	log.Info("CTF created", "title", c.Name)
+	return nil
+}
+
+// provision creates what the CTF owns on Discord. c always holds what exists so
+// far, and is saved after each step so a crash midway can be cleared with /remove.
+func (s *Service) provision(ctx context.Context, client *bot.Client, server store.Server, c *store.CTF, info ctftime.Event, start, end time.Time) error {
+	role, err := createRole(client, server.ID, c.Name)
 	if err != nil {
 		return err
 	}
 	c.RoleID = role.ID
-	if err := s.store.SaveCTF(&c); err != nil {
+	if err := s.store.SaveCTF(c); err != nil {
 		return err
 	}
 
-	channel, err := createChannel(client, server, title, role.ID)
+	channel, err := createChannel(client, server, c.Name, role.ID)
 	if err != nil {
 		return err
 	}
 	c.TextChannelID = channel.ID()
-	if err := s.store.SaveCTF(&c); err != nil {
+	if err := s.store.SaveCTF(c); err != nil {
 		return err
 	}
 
-	if err := welcome(client, channel.ID(), role, title, info.URL); err != nil {
+	if err := welcome(client, channel.ID(), role, c.Name, info.URL); err != nil {
 		return err
 	}
 
 	msg, err := publish(client, server.FeedChannelID, info, start, end)
+	if msg != nil {
+		c.MsgID = msg.ID
+	}
 	if err != nil {
 		return err
 	}
-	c.MsgID = msg.ID
 	c.Description = Truncate(info.Description, maxEventDescLength)
-	if err := s.store.SaveCTF(&c); err != nil {
+	if err := s.store.SaveCTF(c); err != nil {
 		return err
 	}
 
@@ -147,12 +156,7 @@ func (s *Service) Create(ctx context.Context, client *bot.Client, server store.S
 		return err
 	}
 	c.EventID = event.ID
-	if err := s.store.SaveCTF(&c); err != nil {
-		return err
-	}
-
-	log.Info("CTF created", "title", title)
-	return nil
+	return s.store.SaveCTF(c)
 }
 
 func eventTimes(info ctftime.Event) (start, end time.Time, err error) {
@@ -233,6 +237,8 @@ func welcome(client *bot.Client, channelID snowflake.ID, role *discord.Role, tit
 	return nil
 }
 
+// publish sends the feed message. The message is returned even with an error if
+// it was sent, so that it can be cleaned up.
 func publish(client *bot.Client, feedChannelID snowflake.ID, info ctftime.Event, start, end time.Time) (*discord.Message, error) {
 	description := fmt.Sprintf(`
 **Description:**
@@ -266,7 +272,7 @@ func publish(client *bot.Client, feedChannelID snowflake.ID, info ctftime.Event,
 		return nil, fmt.Errorf("send feed message: %w", err)
 	}
 	if err := client.Rest.AddReaction(feedChannelID, message.ID, "✅"); err != nil {
-		return nil, fmt.Errorf("add feed reaction: %w", err)
+		return message, fmt.Errorf("add feed reaction: %w", err)
 	}
 	return message, nil
 }

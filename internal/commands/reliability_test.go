@@ -17,7 +17,7 @@ import (
 
 func seedCTF(t *testing.T, channel, ctftimeID int) store.CTF {
 	t.Helper()
-	c := store.CTF{Name: "x - 2026", ServerID: guildID, TextChannelID: snowflake.ID(channel), RoleID: ctfRole, CTFTimeID: int64(ctftimeID)}
+	c := store.CTF{Name: fmt.Sprintf("ctf %d - 2026", ctftimeID), ServerID: guildID, TextChannelID: snowflake.ID(channel), RoleID: ctfRole, CTFTimeID: int64(ctftimeID)}
 	if err := testStore.AddCTF(&c); err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func stubCTFtime(t *testing.T, h http.HandlerFunc) {
 func TestReportShowsCTFtimeResults(t *testing.T) {
 	const channel, ctftimeID = 22, 777
 	c := seedCTF(t, channel, ctftimeID)
-	if err := testStore.SaveReport(store.Report{CTFID: c.ID, Place: -1, Score: -1, Solves: 4}); err != nil {
+	if err := testStore.SetResults(c.ID, -1, -1, 4); err != nil {
 		t.Fatal(err)
 	}
 	stubCTFtime(t, func(w http.ResponseWriter, _ *http.Request) {
@@ -83,7 +83,7 @@ func TestReportWithoutResultsShowsNA(t *testing.T) {
 func TestDeleteFlagReachesZeroSolves(t *testing.T) {
 	const channel = 23
 	c := seedCTF(t, channel, 779)
-	if err := testStore.SaveReport(store.Report{CTFID: c.ID, Place: -1, Score: -1, Solves: 1}); err != nil {
+	if err := testStore.SetResults(c.ID, -1, -1, 1); err != nil {
 		t.Fatal(err)
 	}
 

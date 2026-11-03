@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/charmbracelet/log"
@@ -56,7 +55,7 @@ func (h *Handlers) flag(e *handler.CommandEvent) error {
 		}
 	}
 
-	solves, err := h.addSolve(c.ID)
+	solves, err := h.store.AddSolve(c.ID)
 	if err != nil {
 		// Losing the count must not hide the flag from the team.
 		log.Error("failed to update report", "err", err, "ctf_id", c.ID)
@@ -87,17 +86,6 @@ func resolveThread(e *handler.CommandEvent) (threadID, channelID snowflake.ID, e
 	return 0, e.Channel().ID(), nil
 }
 
-func (h *Handlers) addSolve(ctfID int64) (int, error) {
-	report, err := h.store.Report(ctfID)
-	if errors.Is(err, store.ErrNotFound) {
-		report = store.Report{CTFID: ctfID, Place: -1, Score: -1}
-	} else if err != nil {
-		return 0, err
-	}
-	report.Solves++
-	return report.Solves, h.store.SaveReport(report)
-}
-
 func flagMessage(e *handler.CommandEvent, c store.CTF) discord.MessageCreate {
 	options := e.SlashCommandInteractionData()
 	content := fmt.Sprintf("<@&%s> NEW FLAG FOUND BY %s", c.RoleID, e.User().Mention())
@@ -124,15 +112,8 @@ func (h *Handlers) deleteFlag(e *handler.CommandEvent) error {
 		return err
 	}
 
-	report, err := h.store.Report(c.ID)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
+	if err := h.store.RemoveSolve(c.ID); err != nil {
 		return err
-	}
-	if err == nil && report.Solves > 0 {
-		report.Solves--
-		if err := h.store.SaveReport(report); err != nil {
-			return err
-		}
 	}
 	return reply(e, "Flag deleted successfully ✅")
 }

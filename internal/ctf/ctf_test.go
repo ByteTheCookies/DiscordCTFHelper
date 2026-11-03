@@ -7,6 +7,7 @@ import (
 	"image/png"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
@@ -20,16 +21,32 @@ import (
 )
 
 // fakeRest rejects every event carrying an image; rejectAll rejects the others too.
+// Setting failAt makes that step of /create fail, and deleted records the rollback.
 type fakeRest struct {
 	rest.Rest
 	rejectAll bool
 	acceptAll bool
+	failAt    string
+	deleteErr error
+	deleted   []string
 	images    []*discord.Icon
 	descs     []string
 	overwrite []discord.PermissionOverwrite
 }
 
+var errStep = errors.New("step failed")
+
+func (f *fakeRest) fail(step string) error {
+	if f.failAt == step {
+		return errStep
+	}
+	return nil
+}
+
 func (f *fakeRest) CreateGuildScheduledEvent(_ snowflake.ID, c discord.GuildScheduledEventCreate, _ ...rest.RequestOpt) (*discord.GuildScheduledEvent, error) {
+	if err := f.fail("event"); err != nil {
+		return nil, err
+	}
 	f.images = append(f.images, c.Image)
 	f.descs = append(f.descs, c.Description)
 	if !f.acceptAll && (c.Image != nil || f.rejectAll) {
@@ -38,7 +55,10 @@ func (f *fakeRest) CreateGuildScheduledEvent(_ snowflake.ID, c discord.GuildSche
 	return &discord.GuildScheduledEvent{ID: 400, Name: c.Name}, nil
 }
 
-func (*fakeRest) CreateRole(snowflake.ID, discord.RoleCreate, ...rest.RequestOpt) (*discord.Role, error) {
+func (f *fakeRest) CreateRole(snowflake.ID, discord.RoleCreate, ...rest.RequestOpt) (*discord.Role, error) {
+	if err := f.fail("role"); err != nil {
+		return nil, err
+	}
 	return &discord.Role{ID: 200}, nil
 }
 
@@ -50,11 +70,17 @@ func unmarshalChannel(raw string) (discord.Channel, error) {
 	return c.Channel, nil
 }
 
-func (*fakeRest) GetChannel(snowflake.ID, ...rest.RequestOpt) (discord.Channel, error) {
+func (f *fakeRest) GetChannel(snowflake.ID, ...rest.RequestOpt) (discord.Channel, error) {
+	if err := f.fail("category"); err != nil {
+		return nil, err
+	}
 	return unmarshalChannel(`{"id":"1","type":4,"name":"active","guild_id":"10"}`)
 }
 
 func (f *fakeRest) CreateGuildChannel(_ snowflake.ID, c discord.GuildChannelCreate, _ ...rest.RequestOpt) (discord.GuildChannel, error) {
+	if err := f.fail("channel"); err != nil {
+		return nil, err
+	}
 	f.overwrite = c.(discord.GuildTextChannelCreate).PermissionOverwrites
 	ch, err := unmarshalChannel(`{"id":"300","type":0,"name":"c","guild_id":"10"}`)
 	if err != nil {
@@ -63,13 +89,46 @@ func (f *fakeRest) CreateGuildChannel(_ snowflake.ID, c discord.GuildChannelCrea
 	return ch.(discord.GuildChannel), nil
 }
 
-func (*fakeRest) CreateMessage(snowflake.ID, discord.MessageCreate, ...rest.RequestOpt) (*discord.Message, error) {
+func (f *fakeRest) CreateMessage(channelID snowflake.ID, _ discord.MessageCreate, _ ...rest.RequestOpt) (*discord.Message, error) {
+	step := "welcome"
+	if channelID == feedChannel {
+		step = "feed"
+	}
+	if err := f.fail(step); err != nil {
+		return nil, err
+	}
 	return &discord.Message{ID: 500}, nil
 }
 
 func (*fakeRest) PinMessage(_, _ snowflake.ID, _ ...rest.RequestOpt) error { return nil }
 
-func (*fakeRest) AddReaction(_, _ snowflake.ID, _ string, _ ...rest.RequestOpt) error { return nil }
+func (f *fakeRest) AddReaction(_, _ snowflake.ID, _ string, _ ...rest.RequestOpt) error {
+	return f.fail("reaction")
+}
+
+func (f *fakeRest) DeleteChannel(snowflake.ID, ...rest.RequestOpt) error {
+	f.deleted = append(f.deleted, "channel")
+	return f.deleteErr
+}
+
+func (f *fakeRest) DeleteRole(_, _ snowflake.ID, _ ...rest.RequestOpt) error {
+	f.deleted = append(f.deleted, "role")
+	return nil
+}
+
+func (f *fakeRest) DeleteMessage(_, _ snowflake.ID, _ ...rest.RequestOpt) error {
+	f.deleted = append(f.deleted, "message")
+	return nil
+}
+
+func (f *fakeRest) DeleteGuildScheduledEvent(_, _ snowflake.ID, _ ...rest.RequestOpt) error {
+	f.deleted = append(f.deleted, "event")
+	return nil
+}
+
+const feedChannel = 2
+
+var testServer = store.Server{ID: 10, ActiveCategoryID: 1, RoleManagerID: 100, FeedChannelID: feedChannel}
 
 func serveLogo(t *testing.T) *httptest.Server {
 	t.Helper()
@@ -149,7 +208,7 @@ func TestCreateStoresEverything(t *testing.T) {
 	defer srv.Close()
 	s, st := newService(t, srv.URL)
 	f := &fakeRest{acceptAll: true}
-	server := store.Server{ID: 10, ActiveCategoryID: 1, RoleManagerID: 100, FeedChannelID: 2}
+	server := testServer
 
 	if err := s.Create(t.Context(), &bot.Client{Rest: f}, server, 7); err != nil {
 		t.Fatal(err)
@@ -172,8 +231,74 @@ func TestCreateStoresEverything(t *testing.T) {
 		t.Fatalf("@everyone overwrite = %+v", everyone)
 	}
 
-	if err := s.Create(t.Context(), &bot.Client{Rest: f}, server, 7); !errors.Is(err, ErrAlreadyExists) {
+	if err := s.Create(t.Context(), &bot.Client{Rest: f}, server, 7); !errors.Is(err, store.ErrExists) {
 		t.Fatalf("second create err = %v", err)
+	}
+	// Losing that race must not undo the CTF that won it.
+	if _, err := st.CTFByChannel(300, 10); err != nil || len(f.deleted) != 0 {
+		t.Fatalf("existing CTF touched: err %v, deleted %v", err, f.deleted)
+	}
+}
+
+func TestCreateRollsBackWhateverItCreated(t *testing.T) {
+	tests := []struct {
+		failAt  string
+		deleted []string
+	}{
+		{failAt: "role"},
+		{failAt: "category", deleted: []string{"role"}},
+		{failAt: "channel", deleted: []string{"role"}},
+		{failAt: "welcome", deleted: []string{"channel", "role"}},
+		{failAt: "feed", deleted: []string{"channel", "role"}},
+		{failAt: "reaction", deleted: []string{"channel", "role", "message"}},
+		{failAt: "event", deleted: []string{"channel", "role", "message"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.failAt, func(t *testing.T) {
+			srv := httptest.NewServer(eventJSON(t, "d"))
+			defer srv.Close()
+			s, st := newService(t, srv.URL)
+			if err := st.ReplaceServer(testServer); err != nil {
+				t.Fatal(err)
+			}
+
+			f := &fakeRest{failAt: tt.failAt, acceptAll: true}
+			client := &bot.Client{Rest: f}
+			if err := s.Create(t.Context(), client, testServer, 7); !errors.Is(err, errStep) {
+				t.Fatalf("err = %v", err)
+			}
+			if !slices.Equal(f.deleted, tt.deleted) {
+				t.Fatalf("deleted %v, want %v", f.deleted, tt.deleted)
+			}
+			if ctfs, err := st.ListCTFs(testServer.ID); err != nil || len(ctfs) != 0 {
+				t.Fatalf("record left behind: %+v, err %v", ctfs, err)
+			}
+
+			// The whole point: trying again now works.
+			f.failAt = ""
+			if err := s.Create(t.Context(), client, testServer, 7); err != nil {
+				t.Fatalf("retry: %v", err)
+			}
+		})
+	}
+}
+
+func TestCreateKeepsRecordWhenRollbackFails(t *testing.T) {
+	srv := httptest.NewServer(eventJSON(t, "d"))
+	defer srv.Close()
+	s, st := newService(t, srv.URL)
+	if err := st.ReplaceServer(testServer); err != nil {
+		t.Fatal(err)
+	}
+
+	f := &fakeRest{failAt: "event", acceptAll: true, deleteErr: errors.New("discord is down")}
+	if err := s.Create(t.Context(), &bot.Client{Rest: f}, testServer, 7); !errors.Is(err, errStep) {
+		t.Fatalf("err = %v, want the original failure", err)
+	}
+	// The channel still exists, so the record must stay for /remove to find it.
+	got, err := st.CTFByChannel(300, testServer.ID)
+	if err != nil || got.RoleID != 200 || got.MsgID != 500 {
+		t.Fatalf("record = %+v, err %v", got, err)
 	}
 }
 

@@ -62,7 +62,7 @@ func TestMain(m *testing.M) {
 		testStore.AddCTF(&seed),
 	)
 	if err == nil {
-		err = testStore.SaveReport(store.Report{CTFID: seed.ID, Place: 3, Score: 100, Solves: 2})
+		err = testStore.SetResults(seed.ID, 3, 100, 2)
 	}
 	if err != nil {
 		panic(err)

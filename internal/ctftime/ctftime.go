@@ -45,9 +45,8 @@ type Client struct {
 	baseURL string
 }
 
-// New returns a Client for the API at baseURL. Requests are bounded by a
-// timeout: events are handled on the gateway goroutine, so a request that never
-// returns would freeze the whole bot.
+// New returns a Client for the API at baseURL. Requests are bounded by a timeout,
+// so a stalled server can't leave a command hanging forever.
 func New(baseURL string) *Client {
 	return &Client{http: &http.Client{Timeout: 20 * time.Second}, baseURL: baseURL}
 }
