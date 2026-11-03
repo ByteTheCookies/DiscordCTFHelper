@@ -1,11 +1,7 @@
 package main
 
 import (
-	"commands"
-	"config"
 	"context"
-	"ctfbot"
-	"database"
 	"flag"
 	"os"
 	"os/signal"
@@ -17,6 +13,11 @@ import (
 	"github.com/disgoorg/disgo/bot"
 	"github.com/disgoorg/disgo/handler"
 	dotenv "github.com/dotenv-org/godotenvvault"
+
+	"github.com/ByteTheCookies/DiscordCTFHelper/internal/commands"
+	"github.com/ByteTheCookies/DiscordCTFHelper/internal/config"
+	"github.com/ByteTheCookies/DiscordCTFHelper/internal/ctfbot"
+	"github.com/ByteTheCookies/DiscordCTFHelper/internal/database"
 )
 
 func init() {
