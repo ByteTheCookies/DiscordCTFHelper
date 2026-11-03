@@ -67,7 +67,7 @@
 4. Run the bot:
 
    ```bash
-   go run cmd/ctfhelper/main.go
+   go run ./cmd/ctfhelper
    ```
 
    Optional flags (dev scope):

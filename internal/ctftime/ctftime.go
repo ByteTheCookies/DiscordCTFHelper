@@ -1,246 +1,159 @@
+// Package ctftime is a client for the CTFtime API.
 package ctftime
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"io"
-	"math/rand"
+	"math/rand/v2"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
-	_ "image/gif"
-	_ "image/jpeg"
-	_ "image/png"
-
-	"github.com/charmbracelet/log"
-
-	"github.com/ByteTheCookies/DiscordCTFHelper/internal/models"
+	_ "image/gif"  // Decode GIF logos.
+	_ "image/jpeg" // Decode JPEG logos.
+	_ "image/png"  // Decode PNG logos.
 )
 
-// BaseURL is the CTFtime API root. It is a variable so tests can point it at a local server.
-var BaseURL = "https://ctftime.org/api/v1"
+// DefaultBaseURL is the root of the CTFtime API.
+const DefaultBaseURL = "https://ctftime.org/api/v1"
 
-// httpClient bounds every CTFtime call: events are handled on the gateway
-// goroutine, so a request that never returns would freeze the whole bot.
-var httpClient = &http.Client{Timeout: 20 * time.Second}
+// maxLogoSize limits how much of a logo is read.
+const maxLogoSize = 5 << 20
 
-var UserAgentList = []string{
+// ErrNoResults is returned when a CTF has no results for the requested team.
+var ErrNoResults = errors.New("no results")
+
+var userAgents = []string{
 	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.5 Safari/605.1.15",
 	"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.5060.53 Safari/537.36",
 	"Mozilla/5.0 (Windows NT 10.0; Windows; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.5060.114 Safari/537.36",
 	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_5) AppleWebKit/603.3.8 (KHTML, like Gecko) Version/10.1.2 Safari/603.3.8",
-	"Mozilla/5.0 (Windows NT 10.0; Windows; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.5060.114 Safari/537.36",
 	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Safari/605.1.15",
-	"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.5060.53 Safari/537.36",
 	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Safari/605.1.15",
-	"Mozilla/5.0 (Windows NT 10.0; Windows; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.5060.114 Safari/537.36",
-	"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.5060.53 Safari/537.36",
 }
 
-func pickRandomAgent() string {
-	return UserAgentList[rand.Intn(len(UserAgentList))]
+// Client calls the CTFtime API.
+type Client struct {
+	http    *http.Client
+	baseURL string
 }
 
-func createRequest(url string) (*http.Request, error) {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
-
-	if err == nil {
-		req.Header.Set("User-Agent", pickRandomAgent())
-	}
-	if err != nil {
-		log.Error("Error creating request:", "err", err)
-		return nil, err
-	}
-	return req, nil
+// New returns a Client for the API at baseURL. Requests are bounded by a
+// timeout: events are handled on the gateway goroutine, so a request that never
+// returns would freeze the whole bot.
+func New(baseURL string) *Client {
+	return &Client{http: &http.Client{Timeout: 20 * time.Second}, baseURL: baseURL}
 }
 
-func GetLogo(url string) ([]byte, string, error) {
-	log.Debug("Fetching logo from URL:", "url", url)
-	req, err := createRequest(url)
+// get fetches url and returns the response if its status is 200.
+func (c *Client) get(ctx context.Context, url string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
-		log.Error("Error creating request for logo:", "err", err)
-		return nil, "", err
+		return nil, fmt.Errorf("create request: %w", err)
 	}
+	req.Header.Set("User-Agent", userAgents[rand.IntN(len(userAgents))]) //nolint:gosec // Not security sensitive.
 
-	resp, err := httpClient.Do(req)
+	resp, err := c.http.Do(req)
 	if err != nil {
-		log.Error("Error sending request for logo:", "err", err)
+		return nil, fmt.Errorf("send request: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("GET %s: status %d", url, resp.StatusCode)
+	}
+	return resp, nil
+}
+
+func (c *Client) getJSON(ctx context.Context, url string, v any) error {
+	resp, err := c.get(ctx, url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
+		return fmt.Errorf("decode %s: %w", url, err)
+	}
+	return nil
+}
+
+// Logo downloads an image and returns its bytes and format, such as "png".
+func (c *Client) Logo(ctx context.Context, url string) ([]byte, string, error) {
+	resp, err := c.get(ctx, url)
+	if err != nil {
 		return nil, "", err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, "", fmt.Errorf("fetch logo: status %d", resp.StatusCode)
-	}
-
-	const maxSize = 5 << 20 // 5 MB
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxSize))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxLogoSize))
 	if err != nil {
-		log.Error("Error reading logo response body:", "err", err)
-		return nil, "", err
+		return nil, "", fmt.Errorf("read logo: %w", err)
 	}
-
-	log.Debug("Logo data fetched, size:", "size", len(data))
 
 	// DecodeConfig only reads the header, so a hostile image can't exhaust memory.
 	_, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
-		log.Error("Error decoding image data:", "err", err)
-		return nil, "", err
+		return nil, "", fmt.Errorf("decode logo: %w", err)
 	}
-
-	log.Debug("Successfully fetched and decoded logo", "format", format)
 	return data, format, nil
 }
 
-func GetCTFInfo(ctftimeID int) (Event, error) {
-	idParsed := strconv.Itoa(ctftimeID)
-	url := BaseURL + "/events/" + idParsed + "/"
-	log.Debug("Fetching CTF info from URL:", "url", url)
-	req, err := createRequest(url)
-	if err != nil {
-		log.Error("Error creating request for CTF info:", "err", err)
-		return Event{}, err
-	}
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		log.Error("Error sending request:", "err", err)
-		return Event{}, err
-	}
-	defer resp.Body.Close()
-
-	var parsedJSON Event
-	if resp.StatusCode != http.StatusOK {
-		return Event{}, fmt.Errorf("status %d", resp.StatusCode)
-	}
-	err = json.NewDecoder(resp.Body).Decode(&parsedJSON)
-	if err != nil {
-		return Event{}, err
-	}
-
-	return parsedJSON, nil
+// Event returns an event by its CTFtime ID.
+func (c *Client) Event(ctx context.Context, id int) (Event, error) {
+	var event Event
+	err := c.getJSON(ctx, c.baseURL+"/events/"+strconv.Itoa(id)+"/", &event)
+	return event, err
 }
 
-func GetCTFs(limit int, onsite bool) ([]Event, error) {
-	url := BaseURL + "/events/" + "?limit=" + strconv.Itoa(limit)
-	log.Debug("Fetching CTFs from URL:", "url", url)
-	req, err := createRequest(url)
-	if err != nil {
-		log.Error("Error creating request for CTFs:", "err", err)
+// Upcoming returns the next events, leaving out the onsite ones unless onsite is true.
+func (c *Client) Upcoming(ctx context.Context, limit int, onsite bool) ([]Event, error) {
+	var events []Event
+	if err := c.getJSON(ctx, c.baseURL+"/events/?limit="+strconv.Itoa(limit), &events); err != nil {
 		return nil, err
 	}
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		log.Error("Error sending request:", "err", err)
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	log.Debug("Received response for CTFs", "status_code", resp.StatusCode)
-
-	if resp.StatusCode != http.StatusOK {
-		log.Error("Non-200 status code received for CTFs", "status_code", resp.StatusCode)
-		return nil, fmt.Errorf("fetch CTFs: status %d", resp.StatusCode)
-	}
-
-	var parsedJSON []Event
-	jsonResponse, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Error("Error reading response body for CTFs:", "err", err)
-		return nil, err
-	}
-
-	err = json.Unmarshal(jsonResponse, &parsedJSON)
-	if err != nil {
-		log.Error("Error unmarshalling CTFs JSON:", "err", err)
-		return nil, err
-	}
-
 	if !onsite {
-		for i := 0; i < len(parsedJSON); i++ {
-			if parsedJSON[i].Onsite {
-				log.Debug("Skipping non-onsite CTF", "ctf_id", parsedJSON[i].ID, "title", parsedJSON[i].Title)
-				parsedJSON = append(parsedJSON[:i], parsedJSON[i+1:]...)
-				i--
-			}
-		}
+		events = slices.DeleteFunc(events, func(e Event) bool { return e.Onsite })
 	}
-	log.Debug("Returning parsed CTFs", "count", len(parsedJSON))
-	return parsedJSON, nil
+	return events, nil
 }
 
-type ResultScore struct {
-	TeamID int64  `json:"team_id"`
-	Place  int    `json:"place"`
-	Points string `json:"points"`
-	Solves int    `json:"solves"`
+// Result is the standing of a team in a CTF.
+type Result struct {
+	Place  int
+	Score  int
+	Solves int
 }
 
-func GetResultsInfo(ctftimeID int64, year int, teamID int64) (*models.Report, error) {
-	log.Debug("Getting results for event with ID", "ctftime_id", ctftimeID)
-	url := fmt.Sprintf("%s/results/%d/", BaseURL, year)
-	log.Debug("Fetching CTF results from URL:", "url", url)
-
-	req, err := createRequest(url)
-	if err != nil {
-		log.Error("Error creating request for results:", "err", err)
-		return nil, err
+// Results returns the standing of a team in a CTF held in year, or ErrNoResults.
+func (c *Client) Results(ctx context.Context, ctftimeID int64, year int, teamID int64) (Result, error) {
+	var events map[string]struct {
+		Scores []struct {
+			TeamID int64  `json:"team_id"`
+			Place  int    `json:"place"`
+			Points string `json:"points"`
+			Solves int    `json:"solves"`
+		} `json:"scores"`
+	}
+	if err := c.getJSON(ctx, fmt.Sprintf("%s/results/%d/", c.baseURL, year), &events); err != nil {
+		return Result{}, err
 	}
 
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		log.Error("Error sending request for results:", "err", err)
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		log.Error("failed to retrieve CTF results information. Status code:", "status", resp.StatusCode)
-		return nil, fmt.Errorf("status %d", resp.StatusCode)
-	}
-
-	var responseData map[string]struct {
-		Scores []ResultScore `json:"scores"`
-	}
-	err = json.NewDecoder(resp.Body).Decode(&responseData)
-	if err != nil {
-		log.Error("Error decoding results response:", "err", err)
-		return nil, err
-	}
-
-	log.Debug("Looking for event ID in results", "ctftime_id", ctftimeID)
-	log.Debug("Looking for team ID in results", "team_id", teamID)
-
-	eventKey := strconv.FormatInt(ctftimeID, 10)
-	eventData, ok := responseData[eventKey]
-	if !ok {
-		log.Error("Event ID not found in results response", "ctftime_id", ctftimeID)
-		return nil, nil
-	}
-
-	for _, result := range eventData.Scores {
-		if result.TeamID == teamID {
-			scoreFloat, err := strconv.ParseFloat(strings.TrimSpace(result.Points), 64)
-			if err != nil {
-				log.Error("Error parsing score to float:", "err", err)
-				return nil, err
-			}
-			scoreInt := int(scoreFloat)
-			report := &models.Report{
-				Place:  result.Place,
-				Score:  scoreInt,
-				Solves: result.Solves,
-			}
-			return report, nil
+	for _, score := range events[strconv.FormatInt(ctftimeID, 10)].Scores {
+		if score.TeamID != teamID {
+			continue
 		}
+		points, err := strconv.ParseFloat(strings.TrimSpace(score.Points), 64)
+		if err != nil {
+			return Result{}, fmt.Errorf("parse score: %w", err)
+		}
+		return Result{Place: score.Place, Score: int(points), Solves: score.Solves}, nil
 	}
-
-	log.Error("Team ID not found in results", "team_id", teamID)
-	return nil, nil
+	return Result{}, ErrNoResults
 }

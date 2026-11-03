@@ -1,60 +1,63 @@
+// Package config reads the bot's configuration from the environment.
 package config
 
 import (
+	"cmp"
+	"fmt"
 	"os"
 	"strings"
 
 	"github.com/charmbracelet/log"
-
 	"github.com/disgoorg/snowflake/v2"
 )
 
+// Version and Commit identify the build.
 var (
 	Version = "main"
 	Commit  = "2.2.0"
 )
 
-func LoadConfig() (*Config, error) {
+// Config is the bot's configuration.
+type Config struct {
+	Log          LogConfig
+	Bot          BotConfig
+	DatabasePath string
+}
+
+// BotConfig configures the connection to Discord.
+type BotConfig struct {
+	DevGuilds []snowflake.ID
+	Token     string
+}
+
+// LogConfig configures logging.
+type LogConfig struct {
+	Level     log.Level
+	Format    string
+	AddSource bool
+}
+
+// Load reads the configuration from the environment.
+func Load() (Config, error) {
 	level, err := log.ParseLevel(strings.ToUpper(os.Getenv("LOG_LEVEL")))
 	if err != nil {
-		return nil, err
+		return Config{}, fmt.Errorf("parse LOG_LEVEL: %w", err)
 	}
 
-	cfg := Config{
-		Bot: BotConfig{
-			DevGuilds: func() []snowflake.ID {
-				var ids []snowflake.ID
-				for _, s := range strings.Split(os.Getenv("GUILDS"), ",") {
-					if id, err := snowflake.Parse(s); err == nil {
-						ids = append(ids, id)
-					}
-				}
-				return ids
-			}(),
-			Token: os.Getenv("TOKEN"),
-		},
+	var guilds []snowflake.ID
+	for s := range strings.SplitSeq(os.Getenv("GUILDS"), ",") {
+		if id, err := snowflake.Parse(s); err == nil {
+			guilds = append(guilds, id)
+		}
+	}
+
+	return Config{
+		Bot: BotConfig{DevGuilds: guilds, Token: os.Getenv("TOKEN")},
 		Log: LogConfig{
 			Level:     level,
 			Format:    os.Getenv("LOG_FORMAT"),
 			AddSource: os.Getenv("LOG_SOURCE") == "true",
 		},
-	}
-
-	return &cfg, nil
-}
-
-type Config struct {
-	Log LogConfig `toml:"log"`
-	Bot BotConfig `toml:"bot"`
-}
-
-type BotConfig struct {
-	DevGuilds []snowflake.ID `toml:"dev_guilds"`
-	Token     string         `toml:"token"`
-}
-
-type LogConfig struct {
-	Level     log.Level `toml:"level"`
-	Format    string    `toml:"format"`
-	AddSource bool      `toml:"add_source"`
+		DatabasePath: cmp.Or(os.Getenv("DB_PATH"), "data/ctfs.db"),
+	}, nil
 }

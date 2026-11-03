@@ -1,19 +1,15 @@
 package commands
 
 import (
-	"slices"
+	"math/rand/v2"
 
-	"github.com/charmbracelet/log"
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/handler"
-	"golang.org/x/exp/rand"
 
-	"github.com/ByteTheCookies/DiscordCTFHelper/internal/database"
-	"github.com/ByteTheCookies/DiscordCTFHelper/internal/discordutils"
-	"github.com/ByteTheCookies/DiscordCTFHelper/internal/models"
+	"github.com/ByteTheCookies/DiscordCTFHelper/internal/ctf"
 )
 
-var chall = discord.SlashCommandCreate{
+var challCommand = discord.SlashCommandCreate{
 	Name:        "chall",
 	Description: "Create a thread for discuss about a challenge",
 	Options: []discord.ApplicationCommandOption{
@@ -25,125 +21,53 @@ var chall = discord.SlashCommandCreate{
 		discord.ApplicationCommandOptionString{
 			Name:        "description",
 			Description: "The description of the challenge",
-			Required:    false,
 		},
 		discord.ApplicationCommandOptionString{
 			Name:        "category",
 			Description: "The category of the challenge",
-			Required:    false,
 		},
 	},
 }
 
-func ChallHandler() handler.CommandHandler {
-	return func(e *handler.CommandEvent) error {
-		db := database.GetInstance().Connection()
-		options := e.SlashCommandInteractionData()
-		name := options.String("name")
-		description, _ := options.OptString("description")
-		category, _ := options.OptString("category")
-
-		if err := e.DeferCreateMessage(true); err != nil {
-			log.Error("failed to defer create message", "error", err)
-			return err
-		}
-
-		if e.GuildID() == nil {
-			log.Warn("Create command used outside of a guild", "user_id", e.User().ID)
-			_, err := e.CreateFollowupMessage(discord.MessageCreate{
-				Content: "This command can only be used inside a guild. ❌",
-				Flags:   discord.MessageFlagEphemeral,
-			})
-			return err
-		}
-
-		var ctf models.CTF
-		err := ctf.GetByChannelID(
-			db,
-			e.Channel().ID(),
-			*e.GuildID(),
-		)
-		if err != nil {
-			log.Error("failed to fetch CTF by channel ID", "error", err)
-			return err
-		}
-		if ctf == (models.CTF{}) {
-			_, err := e.CreateFollowupMessage(discord.MessageCreate{
-				Content: "No CTF is associated with this channel. ❌",
-				Flags:   discord.MessageFlagEphemeral,
-			})
-			return err
-		}
-
-		if !slices.Contains(e.Member().RoleIDs, ctf.RoleID) {
-			_, err := e.CreateFollowupMessage(discord.MessageCreate{
-				Content: "You must be participating in this CTF to create a challenge thread. ❌",
-				Flags:   discord.MessageFlagEphemeral,
-			})
-			return err
-		}
-
-		active, err := discordutils.IsCTFActive(e.Client(), ctf)
-		if err != nil {
-			log.Error("failed to check CTF status", "error", err)
-			return err
-		}
-		if !active {
-			_, err := e.CreateFollowupMessage(discord.MessageCreate{
-				Content: "This CTF is not currently active. ❌",
-				Flags:   discord.MessageFlagEphemeral,
-			})
-			return err
-		}
-
-		// Create the challenge thread
-		embed := discord.Embed{
-			Title:       "Challenge: " + name,
-			Description: "A new challenge discussion thread has been created!",
-			Color:       rand.Intn(0xFFFFFF),
-			Fields:      []discord.EmbedField{},
-		}
-		if category != "" {
-			embed.Fields = append(embed.Fields, discord.EmbedField{
-				Name:  "Category",
-				Value: category,
-			})
-		}
-		if description != "" {
-			embed.Fields = append(embed.Fields, discord.EmbedField{
-				Name:  "Description",
-				Value: description,
-			})
-		}
-		createdMsg, err := e.Client().Rest.CreateMessage(e.Channel().ID(), discord.MessageCreate{
-			Embeds: []discord.Embed{embed},
-		})
-		if err != nil {
-			log.Error("failed to create message", "error", err)
-			return err
-		}
-
-		if _, err := e.Client().Rest.CreateThreadFromMessage(e.Channel().ID(), createdMsg.ID, discord.ThreadCreateFromMessage{
-			Name:                name,
-			AutoArchiveDuration: discord.AutoArchiveDuration3d,
-		}); err != nil {
-			log.Error("failed to create thread", "error", err)
-			_, _ = e.CreateFollowupMessage(discord.MessageCreate{
-				Content: "failed to create the thread. ❌",
-				Flags:   discord.MessageFlagEphemeral,
-			})
-			return err
-		}
-
-		_, err = e.CreateFollowupMessage(discord.MessageCreate{
-			Content: "Thread created successfully! ✅",
-			Flags:   discord.MessageFlagEphemeral,
-		})
-		if err != nil {
-			log.Error("failed to send followup", "error", err)
-			return err
-		}
-
-		return nil
+func (h *Handlers) chall(e *handler.CommandEvent) error {
+	c, ok, err := h.channelCTF(e, e.Channel().ID())
+	if !ok {
+		return err
 	}
+	if !participates(e, c) {
+		return reply(e, "You must be participating in this CTF to create a challenge thread. ❌")
+	}
+	active, err := ctf.IsActive(e.Client(), c)
+	if err != nil {
+		return err
+	}
+	if !active {
+		return reply(e, "This CTF is not currently active. ❌")
+	}
+
+	options := e.SlashCommandInteractionData()
+	name := options.String("name")
+	embed := discord.Embed{
+		Title:       "Challenge: " + name,
+		Description: "A new challenge discussion thread has been created!",
+		Color:       rand.IntN(0xFFFFFF), //nolint:gosec // Not security sensitive.
+	}
+	if category, _ := options.OptString("category"); category != "" {
+		embed.Fields = append(embed.Fields, discord.EmbedField{Name: "Category", Value: category})
+	}
+	if description, _ := options.OptString("description"); description != "" {
+		embed.Fields = append(embed.Fields, discord.EmbedField{Name: "Description", Value: description})
+	}
+
+	msg, err := e.Client().Rest.CreateMessage(e.Channel().ID(), discord.MessageCreate{Embeds: []discord.Embed{embed}})
+	if err != nil {
+		return err
+	}
+	if _, err := e.Client().Rest.CreateThreadFromMessage(e.Channel().ID(), msg.ID, discord.ThreadCreateFromMessage{
+		Name:                name,
+		AutoArchiveDuration: discord.AutoArchiveDuration3d,
+	}); err != nil {
+		return err
+	}
+	return reply(e, "Thread created successfully! ✅")
 }
