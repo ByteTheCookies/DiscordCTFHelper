@@ -5,7 +5,10 @@ import (
 	"time"
 
 	"github.com/disgoorg/disgo/bot"
+	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/events"
+	"github.com/disgoorg/disgo/rest"
+	"github.com/disgoorg/snowflake/v2"
 )
 
 // A slow listener must not keep the others waiting: this one only finishes once
@@ -33,5 +36,31 @@ func TestSlowListenerDoesNotBlockOthers(t *testing.T) {
 	client.EventManager.DispatchEvent(&events.MessageCreate{})
 	if !<-finished {
 		t.Fatal("events are handled one at a time")
+	}
+}
+
+type guildCommandsRest struct {
+	rest.Rest
+	guild    snowflake.ID
+	commands []discord.ApplicationCommandCreate
+}
+
+func (f *guildCommandsRest) SetGuildCommands(_, guildID snowflake.ID, commands []discord.ApplicationCommandCreate, _ ...rest.RequestOpt) ([]discord.ApplicationCommand, error) {
+	f.guild, f.commands = guildID, commands
+	return nil, nil
+}
+
+func TestClearGuildCommandsSendsAnEmptyList(t *testing.T) {
+	f := &guildCommandsRest{}
+	clearGuildCommands(t.Context()).OnEvent(&events.GuildReady{GenericGuild: &events.GenericGuild{
+		GenericEvent: events.NewGenericEvent(&bot.Client{Rest: f}, 0, 0),
+		GuildID:      10,
+	}})
+	if f.guild != 10 {
+		t.Fatalf("cleared guild %d", f.guild)
+	}
+	// nil would reach Discord as null and be rejected.
+	if f.commands == nil || len(f.commands) != 0 {
+		t.Fatalf("commands = %#v, want an empty non-nil list", f.commands)
 	}
 }

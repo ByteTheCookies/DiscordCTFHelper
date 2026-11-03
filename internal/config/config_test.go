@@ -4,16 +4,12 @@ import "testing"
 
 func TestLoad(t *testing.T) {
 	t.Setenv("LOG_LEVEL", "debug")
-	t.Setenv("GUILDS", "1,not-a-number,2")
 	t.Setenv("DB_PATH", "")
 	t.Setenv("GREET_EMOJI_ID", "")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatal(err)
-	}
-	if len(cfg.Bot.DevGuilds) != 2 {
-		t.Errorf("guilds = %v", cfg.Bot.DevGuilds)
 	}
 	if cfg.DatabasePath != "data/ctfs.db" {
 		t.Errorf("database path = %q", cfg.DatabasePath)

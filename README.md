@@ -74,9 +74,7 @@
    go run ./cmd/ctfhelper
    ```
 
-   Optional flags (dev scope):
-   - `--sync-commands`: Sync slash commands to Discord.
-   - `--clean-commands`: Clean existing commands from Discord.
+   Slash commands are published automatically at each start, for every server the bot is in.
 
 ## Usage
 
