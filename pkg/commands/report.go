@@ -131,9 +131,13 @@ func ReportHandler() handler.CommandHandler {
 				return nil
 			}
 			if results != nil {
-				report = *results
-				report.Place = -1
-				report.Score = -1
+				report.CTFID = ctf.ID
+				report.Place = results.Place
+				report.Score = results.Score
+				// CTFtime may not report solves: keep the count from /flag then.
+				if results.Solves > 0 {
+					report.Solves = results.Solves
+				}
 				err = report.Update(db)
 				if err != nil {
 					log.Error("failed to update report in database", "error", err)
@@ -141,34 +145,30 @@ func ReportHandler() handler.CommandHandler {
 			}
 		}
 
+		place, score := "N/A", "N/A"
+		if report.Place > 0 {
+			place, score = strconv.Itoa(report.Place), strconv.Itoa(report.Score)
+		}
+
+		now := time.Now()
 		embed := discord.Embed{
 			Title: "Report for " + ctf.Name,
 			Color: discordutils.ColorBlurple,
 			Fields: []discord.EmbedField{
 				{
-					Name: "Place",
-					Value: func() string {
-						if report.Place == -1 {
-							return "N/A"
-						}
-						return strconv.Itoa(report.Place)
-					}(),
+					Name:  "Place",
+					Value: place,
 				},
 				{
-					Name: "Score",
-					Value: func() string {
-						if report.Place == -1 {
-							return "N/A"
-						}
-						return strconv.Itoa(report.Score)
-					}(),
+					Name:  "Score",
+					Value: score,
 				},
 				{
 					Name:  "Solves",
 					Value: strconv.Itoa(report.Solves),
 				},
 			},
-			Timestamp: &time.Time{},
+			Timestamp: &now,
 		}
 
 		_, err = e.CreateFollowupMessage(discord.MessageCreate{

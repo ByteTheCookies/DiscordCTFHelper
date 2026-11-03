@@ -38,8 +38,10 @@ func (report *Report) GetByCTFID(db *gorm.DB, ctfID int64) error {
 
 // Update updates a report in the database. If it does not exist, it creates it.
 func (report *Report) Update(db *gorm.DB) error {
+	// Select makes GORM write zero values too, or solves could never go back to 0.
 	result := db.Model(&Report{}).
 		Where(Report{CTFID: report.CTFID}).
+		Select("Place", "Solves", "Score").
 		Updates(Report{
 			Place:  report.Place,
 			Solves: report.Solves,

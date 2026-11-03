@@ -16,11 +16,10 @@ func ScheduleEventUpdateHandler() bot.EventListener {
 		func(e *events.GuildScheduledEventUpdate) {
 			db := database.GetInstance().Connection()
 
-			// Get CTF by event name and guild ID
 			var ctf models.CTF
-			err := ctf.GetByName(db, e.GuildScheduled.Name, e.GuildScheduled.GuildID)
+			err := ctf.GetByEventID(db, e.GuildScheduled.ID, e.GuildScheduled.GuildID)
 			if err != nil {
-				log.Error("Error fetching CTF by name for scheduled event update", "err", err, "ctf_name", e.GuildScheduled.Name, "guild_id", e.GuildScheduled.GuildID)
+				log.Error("Error fetching CTF for scheduled event update", "err", err, "event_id", e.GuildScheduled.ID, "guild_id", e.GuildScheduled.GuildID)
 				return
 			}
 			if ctf == (models.CTF{}) {

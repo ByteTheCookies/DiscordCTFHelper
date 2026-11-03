@@ -14,6 +14,24 @@ var help = discord.SlashCommandCreate{
 	Description: "Get a list of available commands",
 }
 
+// helpText lists the commands the bot registers, wherever they were synced to.
+func helpText() string {
+	var sb strings.Builder
+	sb.WriteString("# Available commands\n\n")
+	for _, cmd := range Commands {
+		c, ok := cmd.(discord.SlashCommandCreate)
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(&sb, "**`/%s`** — %s\n", c.Name, c.Description)
+		for _, opt := range c.Options {
+			fmt.Fprintf(&sb, "- **`%s`**: %s\n", opt.OptionName(), opt.OptionDescription())
+		}
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
 func HelpHandler() handler.CommandHandler {
 	return func(e *handler.CommandEvent) error {
 		if err := e.DeferCreateMessage(true); err != nil {
@@ -21,67 +39,9 @@ func HelpHandler() handler.CommandHandler {
 			return err
 		}
 
-		commands, err := e.Client().Rest.GetGlobalCommands(e.Client().ApplicationID, false)
-		if err != nil {
-			log.Error("failed to get global commands", "error", err)
-			return err
-		}
-
-		var sb strings.Builder
-		sb.WriteString("# Available commands\n\n")
-
-		for _, cmd := range commands {
-			switch c := cmd.(type) {
-			case discord.SlashCommand:
-				sb.WriteString(fmt.Sprintf("**`/%s`** — %s\n", c.Name(), c.Description))
-				for _, opt := range c.Options {
-					switch o := opt.(type) {
-					case discord.ApplicationCommandOptionString:
-						sb.WriteString(fmt.Sprintf("- **`%s`** (String): %s\n", o.Name, o.Description))
-						if len(o.Choices) > 0 {
-							sb.WriteString("  - *Choices*: ")
-							for i, choice := range o.Choices {
-								if i > 0 {
-									sb.WriteString(", ")
-								}
-								sb.WriteString(fmt.Sprintf("`%s`", choice.Name))
-							}
-							sb.WriteString("\n")
-						}
-					case discord.ApplicationCommandOptionInt:
-						sb.WriteString(fmt.Sprintf("- **`%s`** (Integer): %s\n", o.Name, o.Description))
-						if o.MinValue != nil {
-							sb.WriteString(fmt.Sprintf("  - *Min*: `%d`\n", *o.MinValue))
-						}
-						if o.MaxValue != nil {
-							sb.WriteString(fmt.Sprintf("  - *Max*: `%d`\n", *o.MaxValue))
-						}
-						if len(o.Choices) > 0 {
-							sb.WriteString("  - *Choices*: ")
-							for i, choice := range o.Choices {
-								if i > 0 {
-									sb.WriteString(", ")
-								}
-								sb.WriteString(fmt.Sprintf("`%s`", choice.Name))
-							}
-							sb.WriteString("\n")
-						}
-					case discord.ApplicationCommandOptionBool:
-						sb.WriteString(fmt.Sprintf("- **`%s`** (Boolean): %s\n", o.Name, o.Description))
-					}
-				}
-			case discord.UserCommand:
-				sb.WriteString(fmt.Sprintf("**User command**: `%s`\n", c.Name()))
-			case discord.MessageCommand:
-				sb.WriteString(fmt.Sprintf("**Message command**: `%s`\n", c.Name()))
-			}
-			sb.WriteString("\n")
-		}
-
-		_, err = e.CreateFollowupMessage(discord.MessageCreate{
-			Content: sb.String(),
-
-			Flags: discord.MessageFlagEphemeral,
+		_, err := e.CreateFollowupMessage(discord.MessageCreate{
+			Embeds: []discord.Embed{{Description: helpText()}},
+			Flags:  discord.MessageFlagEphemeral,
 		})
 		return err
 	}

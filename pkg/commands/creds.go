@@ -23,12 +23,11 @@ func CredsHandler() handler.CommandHandler {
 	return func(e *handler.CommandEvent) error {
 		db := database.GetInstance().Connection()
 		if e.GuildID() == nil {
-			log.Warn("Report command used outside of a guild", "user_id", e.User().ID)
-			_, err := e.CreateFollowupMessage(discord.MessageCreate{
+			log.Warn("Creds command used outside of a guild", "user_id", e.User().ID)
+			return e.CreateMessage(discord.MessageCreate{
 				Content: "This command can only be used inside a guild. ❌",
 				Flags:   discord.MessageFlagEphemeral,
 			})
-			return err
 		}
 
 		var server models.Server

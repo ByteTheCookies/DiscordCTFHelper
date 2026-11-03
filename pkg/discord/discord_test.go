@@ -49,6 +49,9 @@ func TestCreateEventsRetriesOnceWithoutImage(t *testing.T) {
 	if len(f.images) != 2 || f.images[0] == nil || f.images[1] != nil {
 		t.Fatalf("expected image then no image, got %v", f.images)
 	}
+	if got := f.images[0].Type; got != discord.IconTypePNG {
+		t.Fatalf("icon type = %q, want %q", got, discord.IconTypePNG)
+	}
 
 	f = &fakeRest{rejectAll: true}
 	_, err = CreateEvents(&bot.Client{Rest: f}, &guildID, info, "desc", now, now)
@@ -58,5 +61,39 @@ func TestCreateEventsRetriesOnceWithoutImage(t *testing.T) {
 	}
 	if len(f.images) != 2 {
 		t.Fatalf("expected 2 attempts, got %d", len(f.images))
+	}
+}
+
+func TestCreateEventsSurvivesUnavailableLogo(t *testing.T) {
+	logo := httptest.NewServer(http.NotFoundHandler())
+	defer logo.Close()
+
+	guildID := snowflake.ID(1)
+	now := time.Now()
+	f := &fakeRest{}
+	event, err := CreateEvents(&bot.Client{Rest: f}, &guildID, ctftime.Event{Title: "ctf", Logo: logo.URL}, "desc", now, now)
+	if err != nil || event.Name != "ctf" {
+		t.Fatalf("event = %+v, err = %v", event, err)
+	}
+	if len(f.images) != 1 || f.images[0] != nil {
+		t.Fatalf("expected one attempt without image, got %v", f.images)
+	}
+}
+
+func TestTruncate(t *testing.T) {
+	tests := []struct {
+		in   string
+		max  int
+		want string
+	}{
+		{"short", 10, "short"},
+		{"exactly 10", 10, "exactly 10"},
+		{"longer than ten", 10, "longer ..."},
+		{"èèèèèèèèèèèè", 10, "èèèèèèè..."},
+	}
+	for _, tt := range tests {
+		if got := Truncate(tt.in, tt.max); got != tt.want {
+			t.Errorf("Truncate(%q, %d) = %q, want %q", tt.in, tt.max, got, tt.want)
+		}
 	}
 }

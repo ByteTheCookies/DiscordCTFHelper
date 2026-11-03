@@ -16,8 +16,6 @@ import (
 	"github.com/disgoorg/snowflake/v2"
 )
 
-const MaxDescLenght = 4096
-
 var create = discord.SlashCommandCreate{
 	Name:        "create",
 	Description: "Create a CTF event in the discord server.",
@@ -182,10 +180,7 @@ func CreateCTF(guildId *snowflake.ID, client *bot.Client, ctfTimeId int, server 
 		return err
 	}
 
-	var description string
-	if len(data.Description) >= MaxDescLenght {
-		description = data.Description[:MaxDescLenght] + "..."
-	}
+	description := discordutils.Truncate(data.Description, discordutils.MaxEventDescLength)
 
 	ctf.Description = description
 	if err := ctf.Update(db); err != nil {

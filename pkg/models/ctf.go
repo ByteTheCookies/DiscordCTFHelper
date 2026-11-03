@@ -40,9 +40,9 @@ func (ctf *CTF) GetByID(db *gorm.DB, id int64) error {
 	return nil
 }
 
-// GetByName retrieves a CTF by name and server ID (LIKE match).
-func (ctf *CTF) GetByName(db *gorm.DB, name string, serverID snowflake.ID) error {
-	result := db.Where("name LIKE ? AND server_id = ?", "%"+name+"%", serverID).First(ctf)
+// GetByEventID retrieves a CTF by its scheduled event ID and server ID.
+func (ctf *CTF) GetByEventID(db *gorm.DB, eventID, serverID snowflake.ID) error {
+	result := db.Where(CTF{EventID: eventID, ServerID: serverID}).First(ctf)
 	if result.Error != nil {
 		if result.Error == gorm.ErrRecordNotFound {
 			return nil
