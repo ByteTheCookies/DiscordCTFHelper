@@ -96,9 +96,7 @@ func CredsHandler() handler.CommandHandler {
 		if creds == (models.Creds{}) {
 			log.Info("No creds found for CTF, showing modal", "ctf_id", ctf.ID)
 			// Modal
-			modal := discord.NewModalCreateBuilder().
-				SetTitle("Credentials Form").
-				SetCustomID(fmt.Sprintf("creds_modal_%d", ctf.ID)).
+			modal := discord.NewModalCreate(fmt.Sprintf("creds_modal_%d", ctf.ID), "Credentials Form").
 				AddLabel("Username", discord.NewTextInput("username",
 					discord.TextInputStyleShort).
 					WithMinLength(1).
@@ -116,7 +114,7 @@ func CredsHandler() handler.CommandHandler {
 				WithMinLength(2).
 				WithMaxLength(3).
 				WithPlaceholder("yes/no").
-				WithRequired(true)).Build()
+				WithRequired(true))
 
 			log.Debug("Creating creds modal", "modal", modal)
 

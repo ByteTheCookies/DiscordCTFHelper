@@ -85,7 +85,7 @@ func CreateEvents(client *bot.Client, guildID *snowflake.ID, info ctftime.Event,
 		}
 	}
 
-	scheduledEvent, err := client.Rest.CreateGuildScheduledEvent(*guildID, discord.GuildScheduledEventCreate{
+	eventCreate := discord.GuildScheduledEventCreate{
 		Name:               info.Title,
 		Description:        eventDescription,
 		ScheduledStartTime: startTime,
@@ -96,11 +96,16 @@ func CreateEvents(client *bot.Client, guildID *snowflake.ID, info ctftime.Event,
 		EntityMetaData: &discord.EntityMetaData{
 			Location: info.URL,
 		},
-	})
+	}
+
+	scheduledEvent, err := client.Rest.CreateGuildScheduledEvent(*guildID, eventCreate)
+	var restErr *rest.Error
+	if image != nil && errors.As(err, &restErr) && restErr.Message == "Unsupported image type given" {
+		log.Warn("Discord rejected the CTF logo, creating event without image", "logo", info.Logo)
+		eventCreate.Image = nil
+		scheduledEvent, err = client.Rest.CreateGuildScheduledEvent(*guildID, eventCreate)
+	}
 	if err != nil {
-		if restErr, ok := err.(*rest.Error); ok && restErr.Message == "Unsupported image type given" {
-			return CreateEvents(client, guildID, info, eventDescription, startTime, endTime)
-		}
 		return discord.GuildScheduledEvent{}, err
 	}
 
