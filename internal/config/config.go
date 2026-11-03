@@ -11,10 +11,10 @@ import (
 	"github.com/disgoorg/snowflake/v2"
 )
 
-// Version and Commit identify the build.
+// Version and Commit identify the build. They are set at build time with -ldflags.
 var (
-	Version = "main"
-	Commit  = "2.2.0"
+	Version = "dev"
+	Commit  = "unknown"
 )
 
 // Config is the bot's configuration.
@@ -22,6 +22,8 @@ type Config struct {
 	Log          LogConfig
 	Bot          BotConfig
 	DatabasePath string
+	// GreetEmojiID is the custom emoji to greet new members with, 0 for the default one.
+	GreetEmojiID snowflake.ID
 }
 
 // BotConfig configures the connection to Discord.
@@ -51,6 +53,14 @@ func Load() (Config, error) {
 		}
 	}
 
+	var greetEmojiID snowflake.ID
+	if s := os.Getenv("GREET_EMOJI_ID"); s != "" {
+		greetEmojiID, err = snowflake.Parse(s)
+		if err != nil {
+			return Config{}, fmt.Errorf("parse GREET_EMOJI_ID: %w", err)
+		}
+	}
+
 	return Config{
 		Bot: BotConfig{DevGuilds: guilds, Token: os.Getenv("TOKEN")},
 		Log: LogConfig{
@@ -59,5 +69,6 @@ func Load() (Config, error) {
 			AddSource: os.Getenv("LOG_SOURCE") == "true",
 		},
 		DatabasePath: cmp.Or(os.Getenv("DB_PATH"), "data/ctfs.db"),
+		GreetEmojiID: greetEmojiID,
 	}, nil
 }

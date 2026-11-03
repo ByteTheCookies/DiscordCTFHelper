@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -59,7 +60,7 @@ func run() (err error) {
 	svc := ctf.NewService(st, ct)
 	router := commands.New(st, ct, svc).Router(ctx)
 
-	client, err := ctfbot.NewClient(ctx, cfg.Bot.Token, append(listeners.New(st, svc).All(), router)...)
+	client, err := ctfbot.NewClient(ctx, cfg.Bot.Token, append(listeners.New(st, svc, cfg.GreetEmojiID).All(), router)...)
 	if err != nil {
 		return err
 	}
@@ -101,7 +102,7 @@ func setupLogger(cfg config.LogConfig) {
 		Level:           cfg.Level,
 		ReportCaller:    cfg.AddSource,
 		ReportTimestamp: true,
-		TimeFormat:      time.Kitchen,
+		TimeFormat:      time.DateTime,
 	})
 
 	switch cfg.Format {
@@ -114,4 +115,6 @@ func setupLogger(cfg config.LogConfig) {
 	}
 
 	log.SetDefault(logger)
+	// disgo logs through slog: this gives its messages our level and format.
+	slog.SetDefault(slog.New(logger))
 }
