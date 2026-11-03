@@ -28,8 +28,7 @@ type Config struct {
 
 // BotConfig configures the connection to Discord.
 type BotConfig struct {
-	DevGuilds []snowflake.ID
-	Token     string
+	Token string
 }
 
 // LogConfig configures logging.
@@ -46,13 +45,6 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("parse LOG_LEVEL: %w", err)
 	}
 
-	var guilds []snowflake.ID
-	for s := range strings.SplitSeq(os.Getenv("GUILDS"), ",") {
-		if id, err := snowflake.Parse(s); err == nil {
-			guilds = append(guilds, id)
-		}
-	}
-
 	var greetEmojiID snowflake.ID
 	if s := os.Getenv("GREET_EMOJI_ID"); s != "" {
 		greetEmojiID, err = snowflake.Parse(s)
@@ -62,7 +54,7 @@ func Load() (Config, error) {
 	}
 
 	return Config{
-		Bot: BotConfig{DevGuilds: guilds, Token: os.Getenv("TOKEN")},
+		Bot: BotConfig{Token: os.Getenv("TOKEN")},
 		Log: LogConfig{
 			Level:     level,
 			Format:    os.Getenv("LOG_FORMAT"),

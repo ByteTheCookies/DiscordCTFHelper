@@ -4,7 +4,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"log/slog"
 	"os"
@@ -13,7 +12,9 @@ import (
 	"time"
 
 	"github.com/charmbracelet/log"
+	"github.com/disgoorg/disgo/bot"
 	"github.com/disgoorg/disgo/handler"
+	"github.com/disgoorg/disgo/rest"
 	dotenv "github.com/dotenv-org/godotenvvault"
 
 	"github.com/ByteTheCookies/DiscordCTFHelper/internal/commands"
@@ -33,10 +34,6 @@ func main() {
 }
 
 func run() (err error) {
-	syncCommands := flag.Bool("sync-commands", false, "Whether to sync commands to discord")
-	cleanCommands := flag.Bool("clean-commands", false, "Whether to clean commands from discord")
-	flag.Parse()
-
 	if err := dotenv.Load(); err != nil {
 		log.Warn("no .env file loaded, using the environment", "err", err)
 	}
@@ -70,20 +67,7 @@ func run() (err error) {
 		client.Close(closeCtx)
 	}()
 
-	if *cleanCommands {
-		for _, guildID := range cfg.Bot.DevGuilds {
-			log.Info("Clearing commands", "guild_id", guildID)
-			if err := ctfbot.ResetCommands(client, guildID); err != nil {
-				log.Error("failed to reset commands", "err", err)
-			}
-		}
-	}
-	if *syncCommands {
-		log.Info("Syncing commands", "guild_ids", cfg.Bot.DevGuilds)
-		if err := handler.SyncCommands(client, commands.Commands, cfg.Bot.DevGuilds); err != nil {
-			log.Error("failed to sync commands", "err", err)
-		}
-	}
+	syncCommands(ctx, client)
 
 	openCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -95,6 +79,21 @@ func run() (err error) {
 	<-ctx.Done()
 	log.Info("Shutting down bot...")
 	return nil
+}
+
+// syncCommands publishes the commands globally, which makes them available in
+// every server the bot is in or joins later. It's a single request whatever the
+// number of servers, and commands that already exist don't count toward Discord's
+// daily creation limit, so it's safe to run at each startup.
+func syncCommands(ctx context.Context, client *bot.Client) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := handler.SyncCommands(client, commands.Commands, nil, rest.WithCtx(ctx)); err != nil {
+		// The commands already published keep working, so this isn't fatal.
+		log.Error("failed to sync commands", "err", err)
+		return
+	}
+	log.Info("Commands synced", "count", len(commands.Commands))
 }
 
 func setupLogger(cfg config.LogConfig) {

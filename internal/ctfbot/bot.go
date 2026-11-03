@@ -44,7 +44,7 @@ func NewClient(ctx context.Context, token string, listeners ...bot.EventListener
 		// One slow command, like /create, must not hold up every other event.
 		bot.WithEventManagerConfigOpts(bot.WithAsyncEventsEnabled()),
 		bot.WithEventListeners(listeners...),
-		bot.WithEventListeners(readyListener(ctx)),
+		bot.WithEventListeners(readyListener(ctx), clearGuildCommands(ctx)),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create Discord client: %w", err)
@@ -87,26 +87,17 @@ func setPresence(ctx context.Context, client *bot.Client, status string) {
 	}
 }
 
-// ResetCommands deletes the commands registered on the guild and the global ones.
-func ResetCommands(client *bot.Client, guildID snowflake.ID) error {
-	guildCommands, err := client.Rest.GetGuildCommands(client.ApplicationID, guildID, false)
-	if err != nil {
-		return fmt.Errorf("list guild commands: %w", err)
-	}
-	for _, cmd := range guildCommands {
-		if err := client.Rest.DeleteGuildCommand(client.ApplicationID, guildID, cmd.ID()); err != nil {
-			log.Error("failed to delete guild command", "command", cmd.Name(), "err", err)
+// clearGuildCommands removes the guild-scoped commands of a server. They would
+// otherwise show up next to the global ones, as duplicates. GuildReady fires for
+// each server at startup, so this covers all of them.
+func clearGuildCommands(parent context.Context) bot.EventListener {
+	return bot.NewListenerFunc(func(e *events.GuildReady) {
+		ctx, cancel := context.WithTimeout(parent, 10*time.Second)
+		defer cancel()
+		client := e.Client()
+		// The empty slice matters: it has to reach Discord as [], not null.
+		if _, err := client.Rest.SetGuildCommands(client.ApplicationID, e.GuildID, []discord.ApplicationCommandCreate{}, rest.WithCtx(ctx)); err != nil {
+			log.Error("failed to clear guild commands", "guild_id", e.GuildID, "err", err)
 		}
-	}
-
-	globalCommands, err := client.Rest.GetGlobalCommands(client.ApplicationID, false)
-	if err != nil {
-		return fmt.Errorf("list global commands: %w", err)
-	}
-	for _, cmd := range globalCommands {
-		if err := client.Rest.DeleteGlobalCommand(client.ApplicationID, cmd.ID()); err != nil {
-			log.Error("failed to delete global command", "command", cmd.Name(), "err", err)
-		}
-	}
-	return nil
+	})
 }

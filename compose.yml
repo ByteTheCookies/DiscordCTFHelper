@@ -6,7 +6,6 @@ services:
     container_name: bot_container
     environment:
       - TOKEN=${TOKEN}
-      - GUILDS=${GUILDS}
       - LOG_LEVEL=${LOG_LEVEL}
       - LOG_FORMAT=${LOG_FORMAT}
       - LOG_SOURCE=${LOG_SOURCE}
