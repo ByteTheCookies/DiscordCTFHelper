@@ -2,6 +2,9 @@ package store
 
 import (
 	"errors"
+	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/disgoorg/snowflake/v2"
@@ -17,9 +20,9 @@ func open(t *testing.T) *Store {
 	return s
 }
 
-func addCTF(t *testing.T, s *Store) CTF {
+func addCTF(t *testing.T, s *Store, name string) CTF {
 	t.Helper()
-	ctf := CTF{Name: t.Name(), ServerID: 1}
+	ctf := CTF{Name: name, ServerID: 1}
 	if err := s.AddCTF(&ctf); err != nil {
 		t.Fatal(err)
 	}
@@ -59,23 +62,171 @@ func TestLookupsReportNotFound(t *testing.T) {
 	}
 }
 
-func TestSaveReportCreatesThenWritesZeros(t *testing.T) {
+func TestSolvesCountUpAndDownToZero(t *testing.T) {
 	s := open(t)
-	if err := s.SaveReport(Report{CTFID: 7, Place: -1, Score: -1, Solves: 1}); err != nil {
+	for want := 1; want <= 2; want++ {
+		if got, err := s.AddSolve(7); err != nil || got != want {
+			t.Fatalf("AddSolve = %d, err %v, want %d", got, err, want)
+		}
+	}
+	for range 3 { // One more than there are: it must stop at zero.
+		if err := s.RemoveSolve(7); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.Report(7)
+	if err != nil || got.Solves != 0 || got.Place != -1 || got.Score != -1 {
+		t.Fatalf("report = %+v, err %v", got, err)
+	}
+}
+
+func TestSetResultsKeepsSolvesUnlessReported(t *testing.T) {
+	s := open(t)
+	if _, err := s.AddSolve(7); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SaveReport(Report{CTFID: 7, Place: 0, Score: 0, Solves: 0}); err != nil {
+	if err := s.SetResults(7, 3, 100, 0); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.Report(7)
-	if err != nil || got.Place != 0 || got.Score != 0 || got.Solves != 0 {
-		t.Fatalf("report = %+v, err %v", got, err)
+	if err != nil || got.Place != 3 || got.Score != 100 || got.Solves != 1 {
+		t.Fatalf("without solves: %+v, err %v", got, err)
+	}
+	if err := s.SetResults(7, 3, 100, 9); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = s.Report(7); err != nil || got.Solves != 9 {
+		t.Fatalf("with solves: %+v, err %v", got, err)
+	}
+	if err := s.SetResults(8, 1, 2, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = s.Report(8); err != nil || got.Place != 1 {
+		t.Fatalf("new report: %+v, err %v", got, err)
+	}
+}
+
+// concurrently runs f n times at once and returns how many calls succeeded.
+func concurrently(t *testing.T, n int, f func() error) int {
+	t.Helper()
+	var (
+		wg        sync.WaitGroup
+		succeeded atomic.Int32
+	)
+	for range n {
+		wg.Go(func() {
+			err := f()
+			if err == nil {
+				succeeded.Add(1)
+			} else if !errors.Is(err, ErrExists) {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+	wg.Wait()
+	return int(succeeded.Load())
+}
+
+func TestConcurrentSolvesAreAllCounted(t *testing.T) {
+	s := open(t)
+	const n = 50
+	concurrently(t, n, func() error {
+		_, err := s.AddSolve(7)
+		return err
+	})
+	got, err := s.Report(7)
+	if err != nil || got.Solves != n {
+		t.Fatalf("report = %+v, err %v, want %d solves", got, err, n)
+	}
+	var reports int64
+	if err := s.db.Model(&Report{}).Where("ctf_id = 7").Count(&reports).Error; err != nil || reports != 1 {
+		t.Fatalf("%d reports, err %v", reports, err)
+	}
+}
+
+func TestConcurrentAddCTFCreatesOne(t *testing.T) {
+	s := open(t)
+	created := concurrently(t, 20, func() error { return s.AddCTF(&CTF{Name: "same", ServerID: 1}) })
+	if created != 1 {
+		t.Fatalf("%d CTFs created, want 1", created)
+	}
+}
+
+func TestAddCTFAllowsSameNameElsewhere(t *testing.T) {
+	s := open(t)
+	addCTF(t, s, "same")
+	if err := s.AddCTF(&CTF{Name: "same", ServerID: 2}); err != nil {
+		t.Fatalf("another server: %v", err)
+	}
+	removed := addCTF(t, s, "removed")
+	if err := s.DeleteCTF(removed.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddCTF(&CTF{Name: "removed", ServerID: 1}); err != nil {
+		t.Fatalf("after removal: %v", err)
+	}
+}
+
+func TestConcurrentAddCredsStoresOne(t *testing.T) {
+	s := open(t)
+	created := concurrently(t, 20, func() error { return s.AddCreds(Creds{CTFID: 7, Password: "p"}) })
+	if created != 1 || countCreds(t, s, 7) != 1 {
+		t.Fatalf("%d calls succeeded, %d rows", created, countCreds(t, s, 7))
+	}
+}
+
+// Another process on the same file, such as a backup, must make us wait rather than fail.
+func TestWritesWaitForOtherProcesses(t *testing.T) {
+	path := t.TempDir() + "/test.db"
+	a, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = a.Close() })
+	b, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+
+	const n = 40
+	concurrently(t, n, func() error {
+		_, err := a.AddSolve(7)
+		return err
+	})
+	concurrently(t, n, func() error {
+		_, err := b.AddSolve(8)
+		return err
+	})
+	var wg sync.WaitGroup
+	wg.Go(func() { concurrently(t, n, func() error { _, err := a.AddSolve(9); return err }) })
+	wg.Go(func() { concurrently(t, n, func() error { _, err := b.AddSolve(9); return err }) })
+	wg.Wait()
+
+	got, err := a.Report(9)
+	if err != nil || got.Solves != 2*n {
+		t.Fatalf("report = %+v, err %v, want %d solves", got, err, 2*n)
+	}
+
+	// AddCTF reads before writing, the case SQLite fails at once unless the write
+	// lock is taken up front.
+	var names atomic.Int32
+	for _, st := range []*Store{a, b} {
+		wg.Go(func() {
+			concurrently(t, 100, func() error {
+				return st.AddCTF(&CTF{Name: strconv.Itoa(int(names.Add(1))), ServerID: 1})
+			})
+		})
+	}
+	wg.Wait()
+	if ctfs, err := a.ListCTFs(1); err != nil || len(ctfs) != 200 {
+		t.Fatalf("%d CTFs, err %v, want 200", len(ctfs), err)
 	}
 }
 
 func TestSaveCTFKeepsChanges(t *testing.T) {
 	s := open(t)
-	ctf := addCTF(t, s)
+	ctf := addCTF(t, s, "a")
 	ctf.RoleID = 55
 	if err := s.SaveCTF(&ctf); err != nil {
 		t.Fatal(err)
@@ -116,11 +267,11 @@ func TestDeleteCredsErasesThePassword(t *testing.T) {
 
 func TestDeleteCTFTakesCredsAndReportWithIt(t *testing.T) {
 	s := open(t)
-	ctf, other := addCTF(t, s), addCTF(t, s)
+	ctf, other := addCTF(t, s, "a"), addCTF(t, s, "b")
 	for _, id := range []int64{ctf.ID, other.ID} {
 		err := errors.Join(
 			s.AddCreds(Creds{Username: "u", Password: "secret", CTFID: id}),
-			s.SaveReport(Report{CTFID: id, Solves: 1}),
+			s.SetResults(id, 1, 1, 1),
 		)
 		if err != nil {
 			t.Fatal(err)

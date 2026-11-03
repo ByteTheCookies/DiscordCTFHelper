@@ -69,6 +69,6 @@ func TestResults(t *testing.T) {
 
 func TestClientHasTimeout(t *testing.T) {
 	if New("").http.Timeout <= 0 {
-		t.Fatal("a request without timeout can freeze the bot")
+		t.Fatal("a request without timeout can hang forever")
 	}
 }

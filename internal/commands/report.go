@@ -54,14 +54,13 @@ func (h *Handlers) report(e *handler.CommandEvent) error {
 			log.Error("failed to fetch results from CTFtime", "err", err, "ctf_id", c.ID)
 			return reply(e, "Failed to retrieve the report from CTFtime. ❌")
 		default:
-			report.CTFID = c.ID
 			report.Place = results.Place
 			report.Score = results.Score
 			// CTFtime may not report solves: keep the count from /flag then.
 			if results.Solves > 0 {
 				report.Solves = results.Solves
 			}
-			if err := h.store.SaveReport(report); err != nil {
+			if err := h.store.SetResults(c.ID, results.Place, results.Score, results.Solves); err != nil {
 				log.Error("failed to save report", "err", err, "ctf_id", c.ID)
 			}
 		}

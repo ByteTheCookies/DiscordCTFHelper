@@ -42,7 +42,7 @@ func (h *Handlers) create(e *handler.CommandEvent) error {
 
 	err = h.ctf.Create(e.Ctx, e.Client(), server, e.SlashCommandInteractionData().Int("ctftime_id"))
 	switch {
-	case errors.Is(err, ctf.ErrAlreadyExists):
+	case errors.Is(err, store.ErrExists):
 		return reply(e, "The CTF is already present in the discord server. ❌")
 	case errors.Is(err, ctf.ErrInvalidEvent):
 		log.Error("failed to get CTF information", "err", err)

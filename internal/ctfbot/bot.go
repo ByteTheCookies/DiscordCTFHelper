@@ -42,6 +42,8 @@ func NewClient(ctx context.Context, token string, listeners ...bot.EventListener
 			Roles: []snowflake.ID{},
 			Users: []snowflake.ID{},
 		})),
+		// One slow command, like /create, must not hold up every other event.
+		bot.WithEventManagerConfigOpts(bot.WithAsyncEventsEnabled()),
 		bot.WithEventListeners(listeners...),
 		bot.WithEventListeners(readyListener(ctx)),
 	)

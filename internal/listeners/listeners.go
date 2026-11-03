@@ -91,7 +91,11 @@ func (l *Listeners) saveCreds(e *events.ModalSubmitInteractionCreate) string {
 			creds.Personal = strings.EqualFold(input.Value, "yes")
 		}
 	}
-	if err := l.store.AddCreds(creds); err != nil {
+	err = l.store.AddCreds(creds)
+	if errors.Is(err, store.ErrExists) {
+		return "Credentials for this CTF were already submitted. Run /creds to see them."
+	}
+	if err != nil {
 		log.Error("failed to save credentials", "err", err, "ctf_id", ctfID)
 		return "Error saving credentials."
 	}
