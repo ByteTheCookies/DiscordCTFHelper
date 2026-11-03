@@ -1,117 +1,108 @@
+// Command ctfhelper runs the Discord CTF helper bot.
 package main
 
 import (
-	"commands"
-	"config"
 	"context"
-	"ctfbot"
-	"database"
+	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
 	"github.com/charmbracelet/log"
-
-	"github.com/disgoorg/disgo/bot"
 	"github.com/disgoorg/disgo/handler"
 	dotenv "github.com/dotenv-org/godotenvvault"
+
+	"github.com/ByteTheCookies/DiscordCTFHelper/internal/commands"
+	"github.com/ByteTheCookies/DiscordCTFHelper/internal/config"
+	"github.com/ByteTheCookies/DiscordCTFHelper/internal/ctf"
+	"github.com/ByteTheCookies/DiscordCTFHelper/internal/ctfbot"
+	"github.com/ByteTheCookies/DiscordCTFHelper/internal/ctftime"
+	"github.com/ByteTheCookies/DiscordCTFHelper/internal/listeners"
+	"github.com/ByteTheCookies/DiscordCTFHelper/internal/store"
 )
 
-func init() {
-	err := dotenv.Load()
-	if err != nil {
-		log.Error("error loading .env file (if is not intended, stop the container)", "err", err)
+func main() {
+	if err := run(); err != nil {
+		log.Error("bot stopped", "err", err)
+		os.Exit(1)
 	}
 }
 
-func main() {
-	shouldSyncCommands := flag.Bool("sync-commands", false, "Whether to sync commands to discord")
-	shouldCleanCommands := flag.Bool("clean-commands", false, "Whether to clean commands from discord")
+func run() (err error) {
+	syncCommands := flag.Bool("sync-commands", false, "Whether to sync commands to discord")
+	cleanCommands := flag.Bool("clean-commands", false, "Whether to clean commands from discord")
 	flag.Parse()
 
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		log.Error("failed to read config", "err", err)
-		os.Exit(-1)
+	if err := dotenv.Load(); err != nil {
+		log.Warn("no .env file loaded, using the environment", "err", err)
 	}
-
-	dbInstance := database.Setup()
-	db, err := dbInstance.Connection().DB()
+	cfg, err := config.Load()
 	if err != nil {
-		log.Error("failed to get database instance", "err", err)
-		os.Exit(-1)
+		return fmt.Errorf("read config: %w", err)
 	}
-	defer db.Close()
-
 	setupLogger(cfg.Log)
-	log.Info("Starting bot-template...", "version", config.Version, "commit", config.Commit)
-	log.Info("Syncing commands", "sync", *shouldSyncCommands)
+	log.Info("Starting bot", "version", config.Version, "commit", config.Commit)
 
-	b := ctfbot.New(*cfg, config.Version, config.Commit)
-
-	h := handler.New()
-
-	// Command registrations
-	h.Command("/version", commands.VersionHandler())
-	h.Command("/create", commands.CreateHandler())
-	h.Command("/remove", commands.RemoveHandler())
-	h.Command("/flag", commands.FlagHandler())
-	h.Command("/delete-flag", commands.DeleteFlagHandler())
-	h.Command("/report", commands.ReportHandler())
-	h.Command("/creds", commands.CredsHandler())
-	h.Command("/delete-creds", commands.DeleteCredsHandler())
-	h.Command("/next-ctfs", commands.NextCTFsHandler())
-	h.Command("/init", commands.InitHandler())
-	h.Command("/chall", commands.ChallHandler())
-	h.Command("/vote", commands.VoteHandler())
-	h.Command("/ping", commands.PingHandler())
-	h.Command("/rules", commands.RulesHandler())
-	h.Command("/help", commands.HelpHandler())
-	h.Command("/guide", commands.GuideHandler())
-
-	if err = b.SetupBot(shouldCleanCommands, h, bot.NewListenerFunc(b.OnReady)); err != nil {
-		log.Error("failed to setup bot", "err", err)
-		return
+	st, err := store.Open(cfg.DatabasePath)
+	if err != nil {
+		return err
 	}
+	defer func() { err = errors.Join(err, st.Close()) }()
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	ct := ctftime.New(ctftime.DefaultBaseURL)
+	svc := ctf.NewService(st, ct)
+	router := commands.New(st, ct, svc).Router(ctx)
+
+	client, err := ctfbot.NewClient(ctx, cfg.Bot.Token, append(listeners.New(st, svc).All(), router)...)
+	if err != nil {
+		return err
+	}
 	defer func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		closeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		b.Client.Close(ctx)
+		client.Close(closeCtx)
 	}()
 
-	if *shouldSyncCommands {
+	if *cleanCommands {
+		for _, guildID := range cfg.Bot.DevGuilds {
+			log.Info("Clearing commands", "guild_id", guildID)
+			if err := ctfbot.ResetCommands(client, guildID); err != nil {
+				log.Error("failed to reset commands", "err", err)
+			}
+		}
+	}
+	if *syncCommands {
 		log.Info("Syncing commands", "guild_ids", cfg.Bot.DevGuilds)
-		if err = handler.SyncCommands(&b.Client, commands.Commands, cfg.Bot.DevGuilds); err != nil {
+		if err := handler.SyncCommands(client, commands.Commands, cfg.Bot.DevGuilds); err != nil {
 			log.Error("failed to sync commands", "err", err)
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	openCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	if err = b.Client.OpenGateway(ctx); err != nil {
-		log.Error("failed to open gateway", "err", err)
-		return
+	if err := client.OpenGateway(openCtx); err != nil {
+		return fmt.Errorf("open gateway: %w", err)
 	}
 
 	log.Info("Bot is running. Press CTRL-C to exit.")
-	s := make(chan os.Signal, 1)
-	signal.Notify(s, syscall.SIGINT, syscall.SIGTERM)
-	<-s
+	<-ctx.Done()
 	log.Info("Shutting down bot...")
+	return nil
 }
 
 func setupLogger(cfg config.LogConfig) {
-	opts := log.Options{
+	logger := log.NewWithOptions(os.Stdout, log.Options{
 		Level:           cfg.Level,
 		ReportCaller:    cfg.AddSource,
 		ReportTimestamp: true,
 		TimeFormat:      time.Kitchen,
-	}
-
-	logger := log.NewWithOptions(os.Stdout, opts)
+	})
 
 	switch cfg.Format {
 	case "json":

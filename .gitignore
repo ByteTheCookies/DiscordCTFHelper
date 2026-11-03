@@ -22,9 +22,6 @@ coverage.out
 # Dependency directories (uncomment if you vendor dependencies)
 # vendor/
 
-# Go workspace files
-go.work.sum
-
 # IDEs and editors
 .idea/
 .vscode/
