@@ -58,7 +58,7 @@ func (creds *Creds) Update(db *gorm.DB, ctfID int64) error {
 	return nil
 }
 
-// Delete deletes credentials from the database by CTFID.
+// Delete permanently erases credentials by CTFID: passwords must not survive in a soft-deleted row.
 func (creds *Creds) Delete(db *gorm.DB) error {
-	return db.Delete(&Creds{}, Creds{CTFID: creds.CTFID}).Error
+	return db.Unscoped().Delete(&Creds{}, Creds{CTFID: creds.CTFID}).Error
 }

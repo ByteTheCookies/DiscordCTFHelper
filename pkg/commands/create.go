@@ -273,11 +273,8 @@ func CreateHandler() handler.CommandHandler {
 			return err
 		}
 
-		if err := discordutils.CheckPermission(e); err != nil {
-			_, _ = e.CreateFollowupMessage(discord.MessageCreate{
-				Content: "You do not have permission to use this command. ❌",
-				Flags:   discord.MessageFlagEphemeral,
-			})
+		allowed, err := discordutils.CheckPermission(e)
+		if err != nil || !allowed {
 			return err
 		}
 

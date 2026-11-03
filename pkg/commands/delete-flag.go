@@ -57,13 +57,8 @@ func DeleteFlagHandler() handler.CommandHandler {
 			return err
 		}
 
-		// Permission check placeholder (implement as needed)
-		err = discordutils.CheckPermission(e)
-		if err != nil {
-			_, _ = e.CreateFollowupMessage(discord.MessageCreate{
-				Content: "You do not have permission to delete flags. ❌",
-				Flags:   discord.MessageFlagEphemeral,
-			})
+		allowed, err := discordutils.CheckPermission(e)
+		if err != nil || !allowed {
 			return err
 		}
 

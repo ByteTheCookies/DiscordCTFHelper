@@ -3,6 +3,7 @@ package commands
 import (
 	"ctftime"
 	"database"
+	"discordutils"
 	"fmt"
 	"models"
 	"time"
@@ -47,6 +48,18 @@ func VoteHandler() handler.CommandHandler {
 				Flags:   discord.MessageFlagEphemeral,
 			})
 			return err
+		}
+
+		allowed, err := discordutils.IsManager(*e.GuildID(), e.Member())
+		if err != nil {
+			log.Error("failed to check permissions", "error", err)
+			return err
+		}
+		if !allowed {
+			return e.CreateMessage(discord.MessageCreate{
+				Content: discordutils.PermissionDenied,
+				Flags:   discord.MessageFlagEphemeral,
+			})
 		}
 
 		log.Info("Fetching CTFs from ctftime", "onsite", onsite)

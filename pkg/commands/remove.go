@@ -2,6 +2,7 @@ package commands
 
 import (
 	"database"
+	"discordutils"
 	"models"
 	"strconv"
 
@@ -41,6 +42,11 @@ func RemoveHandler() handler.CommandHandler {
 				Content: "This command can only be used inside a guild. ❌",
 				Flags:   discord.MessageFlagEphemeral,
 			})
+			return err
+		}
+
+		allowed, err := discordutils.CheckPermission(e)
+		if err != nil || !allowed {
 			return err
 		}
 

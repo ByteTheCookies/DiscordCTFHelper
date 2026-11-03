@@ -88,9 +88,18 @@ func (ctf *CTF) GetByChannelID(db *gorm.DB, channelID, serverID snowflake.ID) er
 	return nil
 }
 
-// Delete deletes the CTF from the database by its ID.
+// Delete deletes the CTF from the database by its ID, along with its credentials and report.
 func (ctf *CTF) Delete(db *gorm.DB) error {
-	return db.Delete(&CTF{}, ctf.ID).Error
+	return db.Transaction(func(tx *gorm.DB) error {
+		creds := Creds{CTFID: ctf.ID}
+		if err := creds.Delete(tx); err != nil {
+			return err
+		}
+		if err := (&Report{}).Delete(tx, ctf.ID); err != nil {
+			return err
+		}
+		return tx.Delete(&CTF{}, ctf.ID).Error
+	})
 }
 
 // IsPresent checks if a CTF is present in the database by name and server ID.

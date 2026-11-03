@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"database"
+	"discordutils"
 	"fmt"
 	"models"
 	"strconv"
@@ -69,10 +70,21 @@ func RemoveHandler() bot.EventListener {
 	return bot.NewListenerFunc(func(e *events.ComponentInteractionCreate) {
 		db := database.GetInstance().Connection()
 
+		if e.Data.CustomID() != "remove_ctf_select" || e.GuildID() == nil {
+			return
+		}
 		values := e.StringSelectMenuInteractionData().Values
-		selectID := e.Data.CustomID()
 		log.Debug("Select menu interaction", "values", values, "user_id", e.User().ID)
-		if selectID != "remove_ctf_select" {
+
+		allowed, err := discordutils.IsManager(*e.GuildID(), e.Member())
+		if err != nil {
+			log.Error("Error checking permissions", "err", err, "user_id", e.User().ID)
+		}
+		if !allowed {
+			_ = e.CreateMessage(discord.MessageCreate{
+				Content: discordutils.PermissionDenied,
+				Flags:   discord.MessageFlagEphemeral,
+			})
 			return
 		}
 
@@ -97,7 +109,7 @@ func RemoveHandler() bot.EventListener {
 				})
 				return
 			}
-			if ctf == (models.CTF{}) {
+			if ctf == (models.CTF{}) || ctf.ServerID != *e.GuildID() {
 				_ = e.CreateMessage(discord.MessageCreate{
 					Content: fmt.Sprintf("No CTF found with CTFTime ID %d.", valueInt),
 					Flags:   discord.MessageFlagEphemeral,
@@ -115,7 +127,14 @@ func RemoveHandler() bot.EventListener {
 			}
 
 			// Delete CTF from database
-			ctf.Delete(db)
+			if err := ctf.Delete(db); err != nil {
+				log.Error("Error deleting CTF from database", "err", err, "ctf_id", ctf.ID)
+				_ = e.CreateMessage(discord.MessageCreate{
+					Content: "Error while removing the CTF.",
+					Flags:   discord.MessageFlagEphemeral,
+				})
+				return
+			}
 		}
 
 		_ = e.CreateMessage(discord.MessageCreate{

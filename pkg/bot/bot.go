@@ -15,6 +15,7 @@ import (
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/events"
 	"github.com/disgoorg/disgo/gateway"
+	"github.com/disgoorg/disgo/rest"
 	"github.com/disgoorg/snowflake/v2"
 )
 
@@ -47,6 +48,12 @@ func (b *Bot) SetupBot(shouldCleanCommands *bool, listeners ...bot.EventListener
 			gateway.IntentMessageContent, gateway.IntentGuildMembers,
 			gateway.IntentGuildMessageReactions, gateway.IntentGuildScheduledEvents)),
 		bot.WithCacheConfigOpts(cache.WithCaches(cache.FlagGuilds)),
+		// Text from users and CTFtime ends up in messages: never let it ping @everyone.
+		bot.WithRestConfigOpts(rest.WithDefaultAllowedMentions(discord.AllowedMentions{
+			Parse: []discord.AllowedMentionType{discord.AllowedMentionTypeUsers, discord.AllowedMentionTypeRoles},
+			Roles: []snowflake.ID{},
+			Users: []snowflake.ID{},
+		})),
 		bot.WithEventListeners(listeners...),
 		bot.WithEventListeners(handlers.CredsModalListener()),
 		bot.WithEventListeners(handlers.RemoveHandler()),

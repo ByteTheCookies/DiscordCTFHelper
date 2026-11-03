@@ -4,6 +4,7 @@ import (
 	"database"
 	"discordutils"
 	"models"
+	"slices"
 
 	"github.com/charmbracelet/log"
 	"github.com/disgoorg/disgo/discord"
@@ -55,10 +56,6 @@ func ChallHandler() handler.CommandHandler {
 			return err
 		}
 
-		if err := discordutils.CheckPermission(e); err != nil {
-			return err
-		}
-
 		var ctf models.CTF
 		err := ctf.GetByChannelID(
 			db,
@@ -72,6 +69,27 @@ func ChallHandler() handler.CommandHandler {
 		if ctf == (models.CTF{}) {
 			_, err := e.CreateFollowupMessage(discord.MessageCreate{
 				Content: "No CTF is associated with this channel. ❌",
+				Flags:   discord.MessageFlagEphemeral,
+			})
+			return err
+		}
+
+		if !slices.Contains(e.Member().RoleIDs, ctf.RoleID) {
+			_, err := e.CreateFollowupMessage(discord.MessageCreate{
+				Content: "You must be participating in this CTF to create a challenge thread. ❌",
+				Flags:   discord.MessageFlagEphemeral,
+			})
+			return err
+		}
+
+		active, err := discordutils.IsCTFActive(e.Client(), ctf)
+		if err != nil {
+			log.Error("failed to check CTF status", "error", err)
+			return err
+		}
+		if !active {
+			_, err := e.CreateFollowupMessage(discord.MessageCreate{
+				Content: "This CTF is not currently active. ❌",
 				Flags:   discord.MessageFlagEphemeral,
 			})
 			return err
