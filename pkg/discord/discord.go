@@ -20,54 +20,61 @@ import (
 
 const MaxDescLength = 4096
 
-func CheckPermission(e *handler.CommandEvent) error {
-	db := database.GetInstance().Connection()
-	sendEphemeral := func(content string) error {
-		_, err := e.CreateFollowupMessage(discord.MessageCreate{
-			Content: content,
+// PermissionDenied is shown to users who lack the manager role.
+const PermissionDenied = "You don't have the required role to run this command. ❌"
+
+// IsManager reports whether member holds the manager role configured for the guild.
+func IsManager(guildID snowflake.ID, member *discord.ResolvedMember) (bool, error) {
+	if member == nil {
+		return false, nil
+	}
+	var server models.Server
+	if err := server.GetByID(database.GetInstance().Connection(), guildID); err != nil {
+		return false, err
+	}
+	return server.RoleManagerID != 0 && slices.Contains(member.RoleIDs, server.RoleManagerID), nil
+}
+
+// CheckPermission reports whether the user may run a manager command. When the
+// answer is false the user has already been told, so the caller must just stop.
+// The interaction must already be deferred.
+func CheckPermission(e *handler.CommandEvent) (bool, error) {
+	if e.GuildID() == nil {
+		return false, nil
+	}
+	allowed, err := IsManager(*e.GuildID(), e.Member())
+	if err != nil {
+		log.Error("failed to check permissions", "error", err)
+		_, _ = e.CreateFollowupMessage(discord.MessageCreate{
+			Content: "failed to verify your permissions. ❌",
 			Flags:   discord.MessageFlagEphemeral,
 		})
-		return err
+		return false, err
 	}
-
-	guildID := e.GuildID()
-	if guildID == nil {
-		return sendEphemeral("Guild not found. ❌")
+	if allowed {
+		return true, nil
 	}
+	_, err = e.CreateFollowupMessage(discord.MessageCreate{
+		Content: PermissionDenied,
+		Flags:   discord.MessageFlagEphemeral,
+	})
+	return false, err
+}
 
-	guild, err := e.Client().Rest.GetGuild(*guildID, false)
+// IsCTFActive reports whether the CTF's scheduled event is running right now.
+func IsCTFActive(client *bot.Client, ctf models.CTF) (bool, error) {
+	if ctf.EventID == 0 {
+		return false, nil
+	}
+	event, err := client.Rest.GetGuildScheduledEvent(ctf.ServerID, ctf.EventID, false)
+	var restErr *rest.Error
+	if errors.As(err, &restErr) && restErr.Code == rest.JSONErrorCodeUnknownGuildScheduledEvent {
+		return false, nil
+	}
 	if err != nil {
-		return err
+		return false, err
 	}
-
-	var server models.Server
-	err = server.GetByID(db, *guildID)
-	if err != nil {
-		return err
-	}
-	if server == (models.Server{}) {
-		return sendEphemeral("Server configuration not found. ❌")
-	}
-
-	var roleManager *discord.Role
-	for i := range guild.Roles {
-		if guild.Roles[i].ID == server.RoleManagerID {
-			roleManager = &guild.Roles[i]
-			break
-		}
-	}
-	member := e.Member()
-
-	hasRole := false
-	if member != nil && roleManager != nil {
-		hasRole = slices.Contains(member.RoleIDs, roleManager.ID)
-	}
-
-	if member == nil || roleManager == nil || !hasRole {
-		return sendEphemeral("You don't have the required role to run this command. ❌")
-	}
-
-	return nil
+	return event.Status == discord.ScheduledEventStatusActive, nil
 }
 
 func CreateEvents(client *bot.Client, guildID *snowflake.ID, info ctftime.Event, eventDescription string, startTime time.Time, endTime time.Time) (discord.GuildScheduledEvent, error) {

@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/log"
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/handler"
+	"github.com/disgoorg/snowflake/v2"
 )
 
 var flag = discord.SlashCommandCreate{
@@ -58,21 +59,23 @@ func FlagHandler() handler.CommandHandler {
 
 		channelMessage := e.Channel().ID()
 
-		activesThreads, _ := e.Client().Rest.GetActiveGuildThreads(*e.GuildID())
+		activesThreads, err := e.Client().Rest.GetActiveGuildThreads(*e.GuildID())
+		if err != nil {
+			log.Error("failed to fetch active threads", "error", err)
+			return err
+		}
 
+		var threadID snowflake.ID
 		for _, thread := range activesThreads.Threads {
 			if e.Channel().ID() == thread.ID() {
-				locked := true
-				channelUpdates := discord.GuildThreadUpdate{
-					Locked: &locked,
-				}
-				e.Client().Rest.UpdateChannel(thread.ID(), channelUpdates)
+				threadID = thread.ID()
 				channelMessage = *thread.ParentID()
+				break
 			}
 		}
 
 		var ctf models.CTF
-		err := ctf.GetByChannelID(db, channelMessage, *e.GuildID())
+		err = ctf.GetByChannelID(db, channelMessage, *e.GuildID())
 		if err != nil {
 			log.Error("failed to fetch ctf by channel id", "error", err)
 			return err
@@ -83,6 +86,13 @@ func FlagHandler() handler.CommandHandler {
 				Flags:   discord.MessageFlagEphemeral,
 			})
 			return err
+		}
+
+		if threadID != 0 {
+			locked := true
+			if _, err := e.Client().Rest.UpdateChannel(threadID, discord.GuildThreadUpdate{Locked: &locked}); err != nil {
+				log.Error("failed to lock challenge thread", "error", err)
+			}
 		}
 
 		var report models.Report
@@ -107,8 +117,15 @@ func FlagHandler() handler.CommandHandler {
 		}
 
 		content := fmt.Sprintf("<@&%s> NEW FLAG FOUND BY %s", ctf.RoleID, e.User().Mention())
+		// The flag and challenge name are user text: only ping who this message is meant for.
+		mentions := discord.AllowedMentions{
+			Parse: []discord.AllowedMentionType{},
+			Roles: []snowflake.ID{ctf.RoleID},
+			Users: []snowflake.ID{e.User().ID},
+		}
 		if okMate {
 			content += " and " + mate.User.Mention()
+			mentions.Users = append(mentions.Users, mate.User.ID)
 		}
 		if okChallenge {
 			content += " for challenge: " + challengeName
@@ -117,7 +134,8 @@ func FlagHandler() handler.CommandHandler {
 		content += fmt.Sprintf("🎉\n> `%s`", flag)
 
 		msg, err := client.Rest.CreateMessage(channelMessage, discord.MessageCreate{
-			Content: content,
+			Content:         content,
+			AllowedMentions: &mentions,
 		})
 		if err != nil {
 			log.Error("failed to send flag message", "error", err)

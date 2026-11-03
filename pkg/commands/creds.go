@@ -92,7 +92,6 @@ func CredsHandler() handler.CommandHandler {
 		}
 
 		// If no creds, show modal to create creds
-		log.Debug("Fetched creds", "creds", creds)
 		if creds == (models.Creds{}) {
 			log.Info("No creds found for CTF, showing modal", "ctf_id", ctf.ID)
 			// Modal

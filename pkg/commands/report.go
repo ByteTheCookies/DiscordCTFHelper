@@ -5,6 +5,7 @@ import (
 	"database"
 	"discordutils"
 	"models"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -51,10 +52,6 @@ func ReportHandler() handler.CommandHandler {
 			return err
 		}
 
-		if err := discordutils.CheckPermission(e); err != nil {
-			return err
-		}
-
 		// Find the CTF associated with the current channel
 		var ctf models.CTF
 		err = ctf.GetByChannelID(db, e.Channel().ID(), *e.GuildID())
@@ -73,6 +70,14 @@ func ReportHandler() handler.CommandHandler {
 		if ctf == (models.CTF{}) {
 			_, err := e.CreateFollowupMessage(discord.MessageCreate{
 				Content: "No CTF is associated with this channel. ❌",
+				Flags:   discord.MessageFlagEphemeral,
+			})
+			return err
+		}
+
+		if !slices.Contains(e.Member().RoleIDs, ctf.RoleID) {
+			_, err := e.CreateFollowupMessage(discord.MessageCreate{
+				Content: "You must be participating in this CTF to see its report. ❌",
 				Flags:   discord.MessageFlagEphemeral,
 			})
 			return err
