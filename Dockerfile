@@ -22,7 +22,7 @@ RUN GOOS=linux GOARCH=amd64 go build -o ctfhelper \
 
 FROM alpine:3.24.3
 
-RUN apk add --no-cache ca-certificates sqlite && adduser -D -u 1000 ctfhelper
+RUN apk add --no-cache ca-certificates  && adduser -D -u 1000 ctfhelper
 
 COPY --from=builder /app/ctfhelper /ctfhelper
 
